@@ -71,6 +71,14 @@ dev/cfe/cfe_api.c			optional	cfe
 dev/cfe/cfe_console.c			optional	cfe_console
 dev/cfe/cfe_env.c			optional	cfe_env
 
+# clk framework
+dev/clk/clk.c				optional	CLK_FRAMEWORK
+dev/clk/clknode_if.m			optional	CLK_FRAMEWORK
+dev/clk/clk_div.c			optional	CLK_FRAMEWORK
+dev/clk/clk_fixed.c			optional	CLK_FRAMEWORK
+dev/clk/clk_gate.c			optional	CLK_FRAMEWORK
+dev/clk/clk_mux.c			optional	CLK_FRAMEWORK
+
 # syscons support
 dev/fb/fb.c				optional	sc
 dev/syscons/scgfbrndr.c			optional	sc

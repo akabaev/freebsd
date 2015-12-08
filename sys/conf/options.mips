@@ -128,3 +128,7 @@ PV_STATS		opt_pmap.h
 # Options to use ARM_INTRNG code
 #
 MIPS_INTRNG		opt_global.h
+#
+# Option to use CLK_FRAMEWORK
+#
+CLK_FRAMEWORK      opt_global.h
