@@ -46,64 +46,446 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 
 #include <dev/fdt/fdt_common.h>
-#include <dev/fdt/fdt_clock.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
+#include <mips/ingenic/jz4780_clk.h>
 #include <mips/ingenic/jz4780_regs.h>
 
 #include <gnu/dts/include/dt-bindings/clock/jz4780-cgu.h>
 
-struct jz4780_clock_softc;
-
-typedef int (jz4780_clock_control_t)(struct jz4780_clock_softc *sc, int enable, void *info);
-typedef int (jz4780_clock_inquiry_t)(struct jz4780_clock_softc *sc, void *info, void *clkinfo);
-
-struct jz4780_clock_desc {
-	const char             *clock_name;
-	uint32_t                clock_type;
-	jz4780_clock_control_t *clock_ctl;
-	jz4780_clock_inquiry_t *clock_inq;
-	void                   *clock_data;
-};
-
+/**********************************************************************
+ *  JZ4780 CGU clock domain
+ **********************************************************************/
 struct jz4780_clock_softc {
 	device_t	dev;
 	struct resource	*res[1];
 	struct mtx	mtx;
+	struct clkdom	*clkdom;
 };
-
-#define CGU_PLL_M_SHIFT		19
-#define CGU_PLL_M_WIDTH		13
-
-#define CGU_PLL_N_SHIFT		13
-#define CGU_PLL_N_WIDTH		6
-
-#define CGU_PLL_OD_SHIFT	9
-#define CGU_PLL_OD_WIDTH	3
-
-#define CGU_PLL_ON_SHIFT	4
-#define CGU_PLL_ON_WIDTH	1
-
-#define CGU_PLL_MODE_SHIFT	3
-#define CGU_PLL_MODE_WIDTH	1
-
-#define CGU_PLL_BP_SHIFT	1
-#define CGU_PLL_BP_WIDTH	1
-
-#define CGU_PLL_EN_SHIFT	0
-#define CGU_PLL_EN_WIDTH	1
-
-#define REG_MSK(field)			(((1u << field ## _WIDTH) - 1) << field ##_SHIFT)
-#define REG_VAL(field, val)		((val) << field ##_SHIFT)
-#define REG_CLR(reg, field)		((reg) & ~REG_MSK(field))
-#define REG_GET(reg, field)		(((reg) & REG_MSK(field)) >> field ##_SHIFT)
-#define REG_SET(reg, field, val)	(REG_CLR(reg) | REG_VAL(val))
 
 static struct resource_spec jz4780_clock_spec[] = {
 	{ SYS_RES_MEMORY, 0, RF_ACTIVE },
 	{ -1, 0 }
 };
+
+struct jz4780_clk_pll_def {
+	uint16_t   clk_id;
+	uint16_t   clk_reg;
+	const char *clk_name;
+	const char *clk_pname[1];
+};
+
+#define PLL(_id, cname, pname, reg) {		\
+	.clk_id		= _id,			\
+	.clk_reg	= reg,			\
+	.clk_name	= cname,		\
+	.clk_pname[0]	= pname,		\
+}
+
+struct jz4780_clk_gate_def {
+	uint16_t   clk_id;
+	uint16_t   clk_bit;
+	const char *clk_name;
+	const char *clk_pname[1];
+};
+
+#define GATE(_id, cname, pname, bit) {		\
+	.clk_id		= _id,			\
+	.clk_bit	= bit,			\
+	.clk_name	= cname,		\
+	.clk_pname[0]	= pname,		\
+}
+
+#define MUX(reg, shift, bits, map)			\
+    .clk_mux.mux_reg = (reg),				\
+    .clk_mux.mux_shift = (shift),			\
+    .clk_mux.mux_bits = (bits),				\
+    .clk_mux.mux_map = (map),
+#define NO_MUX
+
+#define DIV(reg, shift, lg, bits, ce, st, bb)		\
+    .clk_div.div_reg = (reg),				\
+    .clk_div.div_shift = (shift),			\
+    .clk_div.div_bits = (bits),				\
+    .clk_div.div_lg = (lg),				\
+    .clk_div.div_ce_bit = (ce),				\
+    .clk_div.div_st_bit = (st),				\
+    .clk_div.div_busy_bit = (bb),
+#define NO_DIV						\
+
+#define GATEBIT(bit)					\
+    .clk_gate_bit = (bit),
+#define NO_GATE						\
+    .clk_gate_bit = (-1),
+
+#define PLIST(pnames...)				\
+    .clk_pnames = { pnames },
+
+#define GENCLK(id, name, type, parents, mux, div, gt) {	\
+	.clk_id		= id,				\
+	.clk_type       = type,				\
+	.clk_name	= name,				\
+	parents						\
+	mux						\
+	div						\
+	gt						\
+}
+
+/* PLL definitions */
+static struct jz4780_clk_pll_def pll_clks[] = {
+	PLL(JZ4780_CLK_APLL, "apll", "ext", JZ_CPAPCR),
+	PLL(JZ4780_CLK_MPLL, "mpll", "ext", JZ_CPMPCR),
+	PLL(JZ4780_CLK_EPLL, "epll", "ext", JZ_CPEPCR),
+	PLL(JZ4780_CLK_VPLL, "vpll", "ext", JZ_CPVPCR),
+};
+
+/* OTG PHY clock (reuse gate def structure */
+static struct jz4780_clk_gate_def otg_clks[] = {
+	GATE(JZ4780_CLK_OTGPHY,	"otg_phy",	"ext", 0),
+};
+
+static const struct jz4780_clk_descr gen_clks[] = {
+	GENCLK(JZ4780_CLK_SCLKA, "sclk_a", CLK_MASK_MUX,
+	    PLIST("apll", "ext", "rtc"),
+	    MUX(JZ_CPCCR, 30, 2, 0x7),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_CPUMUX, "cpumux", CLK_MASK_MUX,
+	    PLIST("sclk_a", "mpll", "epll"),
+	    MUX(JZ_CPCCR, 28, 2, 0x7),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_CPU, "cpu", CLK_MASK_DIV,
+	    PLIST("cpumux"),
+	    NO_MUX,
+	    DIV(JZ_CPCCR, 0, 0, 4, 22, -1, -1),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_L2CACHE, "l2cache", CLK_MASK_DIV,
+	    PLIST("cpumux"),
+	    NO_MUX,
+	    DIV(JZ_CPCCR, 4, 0, 4, -1, -1, -1),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_AHB0, "ahb0", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll", "epll"),
+	    MUX(JZ_CPCCR, 26, 2, 0x7),
+	    DIV(JZ_CPCCR, 8, 0, 4, 21, -1, -1),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_AHB2PMUX, "ahb2_apb_mux", CLK_MASK_MUX,
+	    PLIST("sclk_a", "mpll", "rtc"),
+	    MUX(JZ_CPCCR, 24, 2, 0x7),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_AHB2, "ahb2", CLK_MASK_DIV,
+	    PLIST("ahb2_apb_mux"),
+	    NO_MUX,
+	    DIV(JZ_CPCCR, 12, 0, 4, 20, -1, -1),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_PCLK, "pclk", CLK_MASK_DIV,
+	    PLIST("ahb2_apb_mux"),
+	    NO_MUX,
+	    DIV(JZ_CPCCR, 16, 0, 4, 20, -1, -1),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_DDR, "ddr", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll"),
+	    MUX(JZ_DDCDR, 30, 2, 0x6),
+	    DIV(JZ_DDCDR, 0, 0, 4, 29, 28, 27),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_VPU, "vpu", CLK_MASK_MUX | CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("sclk_a", "mpll", "epll"),
+	    MUX(JZ_VPUCDR, 30, 2, 0xe),
+	    DIV(JZ_VPUCDR, 0, 0, 4, 29, 28, 27),
+	    GATEBIT(32 + 2)
+	),
+
+	GENCLK(JZ4780_CLK_I2SPLL, "i2s_pll", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "epll"),
+	    MUX(JZ_I2SCDR, 30, 1, 0xc),
+	    DIV(JZ_I2SCDR, 0, 0, 8, 29, 28, 27),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_I2S, "i2s", CLK_MASK_MUX,
+	    PLIST("ext", "i2s_pll"),
+	    MUX(JZ_I2SCDR, 31, 1, 0xc),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_LCD0PIXCLK, "lcd0pixclk", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll", "vpll"),
+	    MUX(JZ_LP0CDR, 30, 2, 0xe),
+	    DIV(JZ_LP0CDR, 0, 0, 8, 28, 27, 26),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_LCD1PIXCLK, "lcd1pixclk", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll", "vpll"),
+	    MUX(JZ_LP1CDR, 30, 2, 0xe),
+	    DIV(JZ_LP1CDR, 0, 0, 8, 28, 27, 26),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_MSCMUX, "msc_mux", CLK_MASK_MUX,
+	    PLIST("sclk_a", "mpll"),
+	    MUX(JZ_MSC0CDR, 30, 2, 0x6),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_MSC0, "msc0", CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("msc_mux"),
+	    NO_MUX,
+	    DIV(JZ_MSC0CDR, 0, 1, 8, 29, 28, 27),
+	    GATEBIT(3)
+	),
+
+	GENCLK(JZ4780_CLK_MSC1, "msc1", CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("msc_mux"),
+	    NO_MUX,
+	    DIV(JZ_MSC1CDR, 0, 1, 8, 29, 28, 27),
+	    GATEBIT(11)
+	),
+
+	GENCLK(JZ4780_CLK_MSC2, "msc2", CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("msc_mux"),
+	    NO_MUX,
+	    DIV(JZ_MSC2CDR, 0, 1, 8, 29, 28, 27),
+	    GATEBIT(12)
+	),
+
+	GENCLK(JZ4780_CLK_UHC, "uhc", CLK_MASK_MUX | CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("sclk_a", "mpll", "epll", "otg_phy"),
+	    MUX(JZ_UHCCDR, 30, 2, 0xf),
+	    DIV(JZ_UHCCDR, 0, 0, 8, 29, 28, 27),
+	    GATEBIT(24)
+	),
+
+	GENCLK(JZ4780_CLK_SSIPLL, "ssi_pll", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll"),
+	    MUX(JZ_SSICDR, 30, 1, 0xc),
+	    DIV(JZ_SSICDR, 0, 0, 8, 29, 28, 27),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_SSI, "ssi", CLK_MASK_MUX,
+	    PLIST("ext", "ssi_pll"),
+	    MUX(JZ_SSICDR, 31, 1, 0xc),
+	    NO_DIV,
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_CIMMCLK, "cim_mclk", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll"),
+	    MUX(JZ_CIMCDR, 31, 1, 0xc),
+	    DIV(JZ_CIMCDR, 0, 0, 8, 30, 29, 28),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_PCMPLL, "pcm_pll", CLK_MASK_MUX | CLK_MASK_DIV,
+	    PLIST("sclk_a", "mpll", "epll", "vpll"),
+	    MUX(JZ_PCMCDR, 29, 2, 0xf),
+	    DIV(JZ_PCMCDR, 0, 0, 8, 28, 27, 26),
+	    NO_GATE
+	),
+
+	GENCLK(JZ4780_CLK_PCM, "pcm", CLK_MASK_MUX | CLK_MASK_GATE,
+	    PLIST("ext", "pcm_pll"),
+	    MUX(JZ_PCMCDR, 31, 1, 0xc),
+	    NO_DIV,
+	    GATEBIT(32 + 3)
+	),
+
+	GENCLK(JZ4780_CLK_GPU, "gpu", CLK_MASK_MUX | CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("sclk_a", "mpll", "epll"),
+	    MUX(JZ_GPUCDR, 30, 2, 0x7),
+	    DIV(JZ_GPUCDR, 0, 0, 4, 29, 28, 27),
+	    GATEBIT(32 + 4)
+	),
+
+	GENCLK(JZ4780_CLK_HDMI, "hdmi", CLK_MASK_MUX | CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("sclk_a", "mpll", "vpll"),
+	    MUX(JZ_HDMICDR, 30, 2, 0xe),
+	    DIV(JZ_HDMICDR, 0, 0, 8, 29, 28, 26),
+	    GATEBIT(32 + 9)
+	),
+
+	GENCLK(JZ4780_CLK_BCH, "bch", CLK_MASK_MUX | CLK_MASK_DIV | CLK_MASK_GATE,
+	    PLIST("sclk_a", "mpll", "epll"),
+	    MUX(JZ_BCHCDR, 30, 2, 0x7),
+	    DIV(JZ_BCHCDR, 0, 0, 4, 29, 28, 27),
+	    GATEBIT(1)
+	),
+};
+
+static struct jz4780_clk_gate_def gate_clks[] = {
+	GATE(JZ4780_CLK_NEMC,	"nemc",		"ahb2", 0),
+	GATE(JZ4780_CLK_OTG0,	"otg0",		"ext",	2),
+	GATE(JZ4780_CLK_SSI0,	"ssi0",		"ssi",	4),
+	GATE(JZ4780_CLK_SMB0,	"smb0",		"pclk", 5),
+	GATE(JZ4780_CLK_SMB1,	"smb1",		"pclk", 6),
+	GATE(JZ4780_CLK_SCC,	"scc",		"ext",	7),
+	GATE(JZ4780_CLK_AIC,	"aic",		"ext",	8),
+	GATE(JZ4780_CLK_TSSI0,	"tssi0",	"ext",	9),
+	GATE(JZ4780_CLK_OWI,	"owi",		"ext",	10),
+	GATE(JZ4780_CLK_KBC,	"kbc",		"ext",	13),
+	GATE(JZ4780_CLK_SADC,	"sadc",		"ext",	14),
+	GATE(JZ4780_CLK_UART0,	"uart0",	"ext",	15),
+	GATE(JZ4780_CLK_UART1,	"uart1",	"ext",	16),
+	GATE(JZ4780_CLK_UART2,	"uart2",	"ext",	17),
+	GATE(JZ4780_CLK_UART3,	"uart3",	"ext",	18),
+	GATE(JZ4780_CLK_SSI1,	"ssi1",		"ssi",	19),
+	GATE(JZ4780_CLK_SSI2,	"ssi2",		"ssi",	20),
+	GATE(JZ4780_CLK_PDMA,	"pdma",		"ext",	21),
+	GATE(JZ4780_CLK_GPS,	"gps",		"ext",	22),
+	GATE(JZ4780_CLK_MAC,	"mac",		"ext",	23),
+	GATE(JZ4780_CLK_SMB2,	"smb2",		"pclk",	25),
+	GATE(JZ4780_CLK_CIM,	"cim",		"ext",	26),
+	GATE(JZ4780_CLK_LCD,	"lcd",		"ext",	28),
+	GATE(JZ4780_CLK_TVE,	"tve",		"lcd",	27),
+	GATE(JZ4780_CLK_IPU,	"ipu",		"ext",	29),
+	GATE(JZ4780_CLK_DDR0,	"ddr0",		"ddr",	30),
+	GATE(JZ4780_CLK_DDR1,	"ddr1",		"ddr",	31),
+	GATE(JZ4780_CLK_SMB3,	"smb3",		"pclk",	32 + 0),
+	GATE(JZ4780_CLK_TSSI1,	"tssi1",	"ext",	32 + 1),
+	GATE(JZ4780_CLK_COMPRESS, "compress",	"ext",	32 + 5),
+	GATE(JZ4780_CLK_AIC1,	"aic1",		"ext",	32 + 6),
+	GATE(JZ4780_CLK_GPVLC,	"gpvlc",	"ext",	32 + 7),
+	GATE(JZ4780_CLK_OTG1,	"otg1",		"ext",	32 + 8),
+	GATE(JZ4780_CLK_UART4,	"uart4",	"ext",	32 + 10),
+	GATE(JZ4780_CLK_AHBMON,	"ahb_mon",	"ext",	32 + 11),
+	GATE(JZ4780_CLK_SMB4,	"smb4",		"pclk", 32 + 12),
+	GATE(JZ4780_CLK_DES,	"des",		"ext",	32 + 13),
+	GATE(JZ4780_CLK_X2D,	"x2d",		"ext",	32 + 14),
+	GATE(JZ4780_CLK_CORE1,	"core1",	"cpu",	32 + 15),
+};
+
+static int
+jz4780_clock_register(struct jz4780_clock_softc *sc)
+{
+	int i, ret;
+
+	/* Register PLLs */
+	for (i = 0; i < nitems(pll_clks); i++) {
+		struct clknode_init_def clkdef;
+
+		clkdef.id = pll_clks[i].clk_id;
+		clkdef.name = __DECONST(char *, pll_clks[i].clk_name);
+		clkdef.parent_names = pll_clks[i].clk_pname;
+		clkdef.parents_num = 1;
+		clkdef.flags = CLK_FLAGS_STATIC;
+
+		ret = jz4780_clk_pll_register(sc->clkdom, &clkdef, &sc->mtx,
+		    sc->res[0], pll_clks[i].clk_reg);
+		if (ret != 0)
+			return (ret);
+	}
+
+	/* Register OTG clock */
+	for (i = 0; i < nitems(otg_clks); i++) {
+		struct clknode_init_def clkdef;
+
+		clkdef.id = otg_clks[i].clk_id;
+		clkdef.name = __DECONST(char *, otg_clks[i].clk_name);
+		clkdef.parent_names = otg_clks[i].clk_pname;
+		clkdef.parents_num = 1;
+		clkdef.flags = CLK_FLAGS_STATIC;
+
+		ret = jz4780_clk_otg_register(sc->clkdom, &clkdef, &sc->mtx,
+		    sc->res[0]);
+		if (ret != 0)
+			return (ret);
+	}
+
+	/* Register muxes and divisors */
+	for (i = 0; i < nitems(gen_clks); i++) {
+		ret = jz4780_clk_gen_register(sc->clkdom, &gen_clks[i],
+		    &sc->mtx, sc->res[0]);
+		if (ret != 0)
+			return (ret);
+	}
+
+	/* Register simple gates */
+	for (i = 0; i < nitems(gate_clks); i++) {
+		struct clk_gate_def gatedef;
+
+		gatedef.clkdef.id = gate_clks[i].clk_id;
+		gatedef.clkdef.name = __DECONST(char *, gate_clks[i].clk_name);
+		gatedef.clkdef.parent_names = gate_clks[i].clk_pname;
+		gatedef.clkdef.parents_num = 1;
+		gatedef.clkdef.flags = CLK_FLAGS_STATIC;
+
+		if (gate_clks[i].clk_bit < 32) {
+			gatedef.offset = JZ_CLKGR0;
+			gatedef.shift = gate_clks[i].clk_bit;
+		} else {
+			gatedef.offset = JZ_CLKGR1;
+			gatedef.shift = gate_clks[i].clk_bit - 32;
+		}
+		gatedef.mask = 1;
+		gatedef.on_value = 0;
+		gatedef.off_value = 1;
+		gatedef.gate_flags = 0;
+
+		ret = clknode_gate_register(sc->clkdom, &gatedef, &sc->mtx,
+		    sc->res[0]);
+		if (ret != 0)
+			return (ret);
+
+	}
+
+	return (0);
+}
+
+static int
+jz4780_clock_fixup(struct jz4780_clock_softc *sc)
+{
+	struct clknode *clk_uhc;
+	int ret;
+
+	/*
+	 * Make UHC mux use MPLL as the source. It defaults to OTG_PHY
+	 * and that somehow just does not work.
+	 */
+	clkdom_xlock(sc->clkdom);
+
+	/* Assume the worst */
+	ret = ENXIO;
+
+	clk_uhc = clknode_find_by_id(sc->clkdom, JZ4780_CLK_UHC);
+	if (clk_uhc != NULL) {
+		ret = clknode_set_parent_by_name(clk_uhc, "mpll");
+		if (ret != 0)
+			device_printf(sc->dev,
+			    "unable to reparent uhc clock\n");
+		else
+			ret = clknode_set_freq(clk_uhc, 48000000, 0, 0);
+		if (ret != 0)
+			device_printf(sc->dev, "unable to init uhc clock\n");
+	} else
+		device_printf(sc->dev, "unable to lookup uhc clock\n");
+
+	clkdom_unlock(sc->clkdom);
+	return (ret);
+}
 
 #define	CGU_LOCK(sc)		mtx_lock(&(sc)->mtx)
 #define	CGU_UNLOCK(sc)		mtx_unlock(&(sc)->mtx)
@@ -130,29 +512,37 @@ jz4780_clock_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
-/* Remove soon */
-static void apbus_attach(device_t dev);
-
 static int
 jz4780_clock_attach(device_t dev)
 {
 	struct jz4780_clock_softc *sc = device_get_softc(dev);
-
-	sc->dev = dev;
 
 	if (bus_alloc_resources(dev, jz4780_clock_spec, sc->res)) {
 		device_printf(dev, "could not allocate resources for device\n");
 		return (ENXIO);
 	}
 
-	/* HACK */
-	apbus_attach(dev);
-
+	sc->dev = dev;
 	CGU_LOCK_INIT(sc);
 
-	fdt_clock_register_provider(dev);
+	sc->clkdom = clkdom_create(dev);
+	if (sc->clkdom == NULL)
+		goto fail;
+	if (jz4780_clock_register(sc) != 0)
+		goto fail;
+	if (clkdom_finit(sc->clkdom) != 0)
+		goto fail;
+	if (jz4780_clock_fixup(sc) != 0)
+		goto fail;
+	if (bootverbose)
+		clkdom_dump(sc->clkdom);
 
 	return (0);
+fail:
+	bus_release_resources(dev, jz4780_clock_spec, sc->res);
+	CGU_LOCK_DESTROY(sc);
+
+	return (ENXIO);
 }
 
 static int
@@ -160,33 +550,10 @@ jz4780_clock_detach(device_t dev)
 {
 	struct jz4780_clock_softc *sc = device_get_softc(dev);
 
-	fdt_clock_unregister_provider(dev);
-
 	bus_release_resources(dev, jz4780_clock_spec, sc->res);
 	CGU_LOCK_DESTROY(sc);
 
 	return (0);
-}
-
-static int
-jz4780_clock_enable(device_t dev, int index)
-{
-
-	return (0);
-}
-
-static int
-jz4780_clock_disable(device_t dev, int index)
-{
-
-	return (0);
-}
-
-static int
-jz4780_clock_get_info(device_t dev, int index, struct fdt_clock_info *info)
-{
-
-	return (ENXIO);
 }
 
 static device_method_t jz4780_clock_methods[] = {
@@ -194,11 +561,6 @@ static device_method_t jz4780_clock_methods[] = {
 	DEVMETHOD(device_probe,		jz4780_clock_probe),
 	DEVMETHOD(device_attach,	jz4780_clock_attach),
 	DEVMETHOD(device_detach,	jz4780_clock_detach),
-
-	/* fdt_clock interface */
-	DEVMETHOD(fdt_clock_enable,	jz4780_clock_enable),
-	DEVMETHOD(fdt_clock_disable,	jz4780_clock_disable),
-	DEVMETHOD(fdt_clock_get_info,	jz4780_clock_get_info),
 
 	DEVMETHOD_END
 };
@@ -214,104 +576,192 @@ static devclass_t jz4780_clock_devclass;
 EARLY_DRIVER_MODULE(jz4780_clock, simplebus, jz4780_clock_driver,
     jz4780_clock_devclass, 0, 0,  BUS_PASS_CPU + BUS_PASS_ORDER_LATE);
 
-typedef struct apbus_dev {
-	const char *name;	/* driver name */
-	bus_addr_t addr;	/* base address */
-	uint32_t irq;		/* interrupt */
-	uint32_t clk0;		/* bit(s) in CLKGR0 */
-	uint32_t clk1;		/* bit(s) in CLKGR1 */
-	uint32_t clkreg;	/* CGU register */
-} apbus_dev_t;
-
-/*
- * Hack: steal code from NetBSD until fine-grained CGU is
- * functional.
- */
-static const apbus_dev_t apbus_devs[] = {
-	{ "efuse",	JZ_EFUSE,	-1, 0, 0, 0},
-	{ "com",	JZ_UART0,	51, CLK_UART0, 0, 0},
-	{ "com",	JZ_UART1,	50, CLK_UART1, 0, 0},
-	{ "com",	JZ_UART2,	49, CLK_UART2, 0, 0},
-	{ "com",	JZ_UART3,	48, CLK_UART3, 0, 0},
-	{ "com",	JZ_UART4,	34, 0, CLK_UART4, 0},
-	{ "dwctwo",	JZ_DWC2_BASE,   21, CLK_OTG0 | CLK_UHC, CLK_OTG1, 0},
-	{ "ohci",	JZ_OHCI_BASE,    5, CLK_UHC, 0, 0},
-	{ "ehci",	JZ_EHCI_BASE,   20, CLK_UHC, 0, 0},
-	{ "jziic",	JZ_SMB0_BASE,   60, CLK_SMB0, 0, 0},
-	{ "jziic",	JZ_SMB1_BASE,   59, CLK_SMB1, 0, 0},
-	{ "jziic",	JZ_SMB2_BASE,   58, CLK_SMB2, 0, 0},
-	{ "jziic",	JZ_SMB3_BASE,   57, 0, CLK_SMB3, 0},
-	{ "jziic",	JZ_SMB4_BASE,   56, 0, CLK_SMB4, 0},
-	{ "jzmmc",	JZ_MSC0_BASE,   37, CLK_MSC0, 0, JZ_MSC0CDR},
-	{ "jzmmc",	JZ_MSC1_BASE,   36, CLK_MSC1, 0, JZ_MSC1CDR},
-	{ "jzmmc",	JZ_MSC2_BASE,   35, CLK_MSC2, 0, JZ_MSC2CDR},
-	{ "jzfb",	JZ_LCDC0_BASE,  31, CLK_LCD, CLK_HDMI, 0},
-	{ "dme",	0,		-1, CLK_MAC, 0, 0},
-	{ "core1",	0,		-1, 0, CLK_P1, 0},
-	{ NULL,		-1,             -1, 0, 0, 0}
-};
-
-static void
-apbus_attach(device_t dev)
+static int
+jz4780_ehci_clk_config(struct jz4780_clock_softc *sc)
 {
-	struct jz4780_clock_softc *sc;
+	clk_t phy_clk, ext_clk;
+	uint64_t phy_freq;
+	int err;
 
-	uint32_t reg, mpll, m, n, p, mclk, pclk, pdiv, cclk, cdiv;
+	phy_clk = NULL;
+	ext_clk = NULL;
+	err = -1;
+
+	/* Set phy timing by copying it from ext */
+	if (clk_get_by_id(sc->dev, sc->clkdom, JZ4780_CLK_OTGPHY,
+	    &phy_clk) != 0)
+		goto done;
+	if (clk_get_parent(phy_clk, &ext_clk) != 0)
+		goto done;
+	if (clk_get_freq(ext_clk, &phy_freq) != 0)
+		goto done;
+	if (clk_set_freq(phy_clk, phy_freq, 0) != 0)
+		goto done;
+	err = 0;
+done:
+	clk_release(ext_clk);
+	clk_release(phy_clk);
+
+	return (err);
+}
+
+int
+jz4780_ohci_enable(void)
+{
+	device_t dev;
+	struct jz4780_clock_softc *sc;
+	uint32_t reg;
+
+	dev = devclass_get_device(jz4780_clock_devclass, 0);
+	if (dev == NULL)
+		return (-1);
+
+	sc = device_get_softc(dev);
+	CGU_LOCK(sc);
+
+	/* Do not force port1 to suspend mode */
+	reg = CSR_READ_4(sc, JZ_OPCR);
+	reg |= OPCR_SPENDN1;
+	CSR_WRITE_4(sc, JZ_OPCR, reg);
+
+	CGU_UNLOCK(sc);
+	return (0);
+}
+
+int
+jz4780_ehci_enable(void)
+{
+	device_t dev;
+	struct jz4780_clock_softc *sc;
+	uint32_t reg;
+
+	dev = devclass_get_device(jz4780_clock_devclass, 0);
+	if (dev == NULL)
+		return (-1);
 
 	sc = device_get_softc(dev);
 
-	/* assuming we're using MPLL */
-	mpll = CSR_READ_4(sc, JZ_CPMPCR);
-	m = (mpll & JZ_PLLM_M) >> JZ_PLLM_S;
-	n = (mpll & JZ_PLLN_M) >> JZ_PLLN_S;
-	p = (mpll & JZ_PLLP_M) >> JZ_PLLP_S;
-	/* assuming 48MHz EXTCLK */
-	mclk = (48000 * (m + 1) / (n + 1)) / (p + 1);
+	/*
+	 * EHCI should use MPPL as a parent, but Linux configures OTG
+	 * clock anyway. Follow their lead blindly.
+	 */
+	if (jz4780_ehci_clk_config(sc) != 0)
+		return (-1);
 
-	reg = CSR_READ_4(sc, JZ_CPCCR);
-	pdiv = ((reg & JZ_PDIV_M) >> JZ_PDIV_S) + 1;
-	pclk = mclk / pdiv;
-	cdiv = (reg & JZ_CDIV_M) + 1;
-	cclk = mclk / cdiv;
+	CGU_LOCK(sc);
 
-	device_printf(dev, "mclk %d kHz\n", mclk);
-	device_printf(dev, "pclk %d kHz\n", pclk);
-	device_printf(dev, "CPU clock %d kHz\n", cclk);
+	/* Enable OTG, should not be necessary since we use PLL clock */
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg &= ~(PCR_OTG_DISABLE);
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
 
-	/* enable clocks */
-	reg = CSR_READ_4(sc, JZ_CLKGR1);
-	reg &= ~CLK_AHB_MON;	/* AHB_MON clock */
-	CSR_WRITE_4(sc, JZ_CLKGR1, reg);
-
-	/* wake up the USB part */
+	/* Do not force port1 to suspend mode */
 	reg = CSR_READ_4(sc, JZ_OPCR);
-	reg |= OPCR_SPENDN0 | OPCR_SPENDN1;
+	reg |= OPCR_SPENDN1;
 	CSR_WRITE_4(sc, JZ_OPCR, reg);
 
-	for (const apbus_dev_t *adv = apbus_devs; adv->name != NULL; adv++) {
-		/* enable clocks as needed */
-		if (adv->clk0 != 0) {
-			reg = CSR_READ_4(sc, JZ_CLKGR0);
-			reg &= ~adv->clk0;
-			CSR_WRITE_4(sc, JZ_CLKGR0, reg);
-		}
+	/* D- pulldown */
+	reg = CSR_READ_4(sc, JZ_USBPCR1);
+	reg |= PCR_DMPD1;
+	CSR_WRITE_4(sc, JZ_USBPCR1, reg);
 
-		if (adv->clk1 != 0) {
-			reg = CSR_READ_4(sc, JZ_CLKGR1);
-			reg &= ~adv->clk1;
-			CSR_WRITE_4(sc, JZ_CLKGR1, reg);
-		}
-	}
+	/* D+ pulldown */
+	reg = CSR_READ_4(sc, JZ_USBPCR1);
+	reg |= PCR_DPPD1;
+	CSR_WRITE_4(sc, JZ_USBPCR1, reg);
 
-	device_printf(dev, "JZ_CPCCR  %08x\n", CSR_READ_4(sc, JZ_CPCCR));
-	device_printf(dev, "JZ_CLKGR0 %08x\n", CSR_READ_4(sc, JZ_CLKGR0));
-	device_printf(dev, "JZ_CLKGR1 %08x\n", CSR_READ_4(sc, JZ_CLKGR1));
-	device_printf(dev, "JZ_SPCR0  %08x\n", CSR_READ_4(sc, JZ_SPCR0));
-	device_printf(dev, "JZ_SPCR1  %08x\n", CSR_READ_4(sc, JZ_SPCR1));
-	device_printf(dev, "JZ_SRBC   %08x\n", CSR_READ_4(sc, JZ_SRBC));
-	device_printf(dev, "JZ_OPCR   %08x\n", CSR_READ_4(sc, JZ_OPCR));
-	device_printf(dev, "JZ_UHCCDR %08x\n", CSR_READ_4(sc, JZ_UHCCDR));
-	device_printf(dev, "JZ_ERNG   %08x\n", CSR_READ_4(sc, JZ_ERNG));
-	device_printf(dev, "JZ_RNG    %08x\n", CSR_READ_4(sc, JZ_RNG));
+	/* 16 bit bus witdth for port 1*/
+	reg = CSR_READ_4(sc, JZ_USBPCR1);
+	reg |= PCR_WORD_I_F1 | PCR_WORD_I_F0;
+	CSR_WRITE_4(sc, JZ_USBPCR1, reg);
+
+	/* Reset USB */
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg |= PCR_POR;
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
+	DELAY(1);
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg &= ~(PCR_POR);
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
+
+	/* Soft-reset USB */
+	reg = CSR_READ_4(sc, JZ_SRBC);
+	reg |= SRBC_UHC_SR;
+	CSR_WRITE_4(sc, JZ_SRBC, reg);
+	/* 300ms */
+	DELAY(300*hz/1000);
+
+	reg = CSR_READ_4(sc, JZ_SRBC);
+	reg &= ~(SRBC_UHC_SR);
+	CSR_WRITE_4(sc, JZ_SRBC, reg);
+
+	/* 300ms */
+	DELAY(300*hz/1000);
+
+	CGU_UNLOCK(sc);
+	return (0);
 }
 
+#define	USBRESET_DETECT_TIME	0x96
+
+int
+jz4780_otg_enable(void)
+{
+	device_t dev;
+	struct jz4780_clock_softc *sc;
+	uint32_t reg;
+
+	dev = devclass_get_device(jz4780_clock_devclass, 0);
+	if (dev == NULL)
+		return (-1);
+
+	sc = device_get_softc(dev);
+
+	CGU_LOCK(sc);
+
+	/* Select Synopsys OTG mode */
+	reg = CSR_READ_4(sc, JZ_USBPCR1);
+	reg |= PCR_SYNOPSYS;
+
+	/* Set UTMI bus width to 16 bit */
+	reg |= PCR_WORD_I_F0 | PCR_WORD_I_F1;
+	CSR_WRITE_4(sc, JZ_USBPCR1, reg);
+
+	/* Blah */
+	reg = CSR_READ_4(sc, JZ_USBVBFIL);
+	reg = REG_SET(reg, USBVBFIL_IDDIGFIL, 0);
+	reg = REG_SET(reg, USBVBFIL_USBVBFIL, 0);
+	CSR_WRITE_4(sc, JZ_USBVBFIL, reg);
+
+	/* Setup reset detect time */
+	reg = CSR_READ_4(sc, JZ_USBRDT);
+	reg = REG_SET(reg, USBRDT_USBRDT, USBRESET_DETECT_TIME);
+	reg |= USBRDT_VBFIL_LD_EN;
+	CSR_WRITE_4(sc, JZ_USBRDT, reg);
+
+	/* Setup USBPCR bits */
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg |= PCR_USB_MODE;
+	reg |= PCR_COMMONONN;
+	reg |= PCR_VBUSVLDEXT;
+	reg |= PCR_VBUSVLDEXTSEL;
+	reg &= ~(PCR_OTG_DISABLE);
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
+
+	/* Reset USB */
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg |= PCR_POR;
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
+	DELAY(1000);
+	reg = CSR_READ_4(sc, JZ_USBPCR);
+	reg &= ~(PCR_POR);
+	CSR_WRITE_4(sc, JZ_USBPCR, reg);
+
+	/* Unsuspend OTG port */
+	reg = CSR_READ_4(sc, JZ_OPCR);
+	reg |= OPCR_SPENDN0;
+	CSR_WRITE_4(sc, JZ_OPCR, reg);
+
+	CGU_UNLOCK(sc);
+	return (0);
+}

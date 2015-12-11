@@ -45,8 +45,9 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
+#include <dev/clk/clk.h>
+
 #include <dev/fdt/fdt_common.h>
-#include <dev/fdt/fdt_clock.h>
 #include <dev/fdt/simplebus.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -64,6 +65,7 @@ struct jz4780_nemc_softc {
 	struct resource		*res[1];
 	uint32_t		banks;
 	uint32_t		clock_tick_psecs;
+	clk_t			clk;
 };
 
 static struct resource_spec jz4780_nemc_spec[] = {
@@ -450,8 +452,8 @@ static int
 jz4780_nemc_attach(device_t dev)
 {
 	struct jz4780_nemc_softc *sc = device_get_softc(dev);
-	struct fdt_clock_info clkinfo;
 	phandle_t node;
+	uint64_t freq;
 
 	sc->dev = dev;
 
@@ -469,14 +471,21 @@ jz4780_nemc_attach(device_t dev)
 		goto error;
 
 	/* Figure our underlying clock rate. */
-	if (fdt_clock_get_info(dev, 0, &clkinfo)) {
+	if (clk_get_by_ofw_index(dev, 0, &sc->clk) != 0) {
+		device_printf(dev, "could not lookup device clock\n");
+		goto error;
+	}
+	if (clk_enable(sc->clk) != 0) {
+		device_printf(dev, "could not enable device clock\n");
+		goto error;
+	}
+	if (clk_get_freq(sc->clk, &freq) != 0) {
 		device_printf(dev, "could not determine clock speed\n");
-		/* Assume something */
-		clkinfo.frequency = 200000000;
+		goto error;
 	}
 
 	/* Convert clock frequency to picoseconds-per-tick value. */
-	sc->clock_tick_psecs = (1000000000000ULL / clkinfo.frequency);
+	sc->clock_tick_psecs = (uint32_t)(1000000000000ULL / freq);
 
 	/*
 	 * Allow devices to identify.
@@ -501,6 +510,8 @@ jz4780_nemc_detach(device_t dev)
 	struct jz4780_nemc_softc *sc = device_get_softc(dev);
 
 	bus_generic_detach(dev);
+	if (sc->clk != NULL)
+		clk_release(sc->clk);
 	bus_release_resources(dev, jz4780_nemc_spec, sc->res);
 	return (0);
 }

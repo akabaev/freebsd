@@ -43,6 +43,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/cpu.h>
 #include <machine/hwfunc.h>
 
+#include <dev/clk/clk.h>
+
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -146,8 +148,8 @@ static int
 jz4780_timer_attach(device_t dev)
 {
 	struct jz4780_timer_softc *sc = device_get_softc(dev);
-	phandle_t pclock;
 	pcell_t counter_freq;
+	clk_t clk;
 
 	/* There should be exactly one instance. */
 	if (jz4780_timer_sc != NULL)
@@ -160,16 +162,18 @@ jz4780_timer_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	/* Hardcode value we 'know' is correct, but verify below. */
-	counter_freq = 48000000 / 4;
+	counter_freq = 0;
+	if (clk_get_by_name(dev, "ext", &clk) == 0) {
+		uint64_t clk_freq;
 
-	pclock = OF_finddevice("/ext");
-	if (pclock != -1) {
-		if (OF_getencprop(pclock, "clock-frequency", &counter_freq,
-		    sizeof(counter_freq)) <= 0)
-			device_printf(dev, "unable to determine ext clock frequency\n");
-		else
-			counter_freq /= 4;
+		if (clk_get_freq(clk, &clk_freq) == 0)
+			counter_freq = (uint32_t)clk_freq / 4;
+		clk_release(clk);
+	}
+	if (counter_freq == 0) {
+		device_printf(dev, "unable to determine ext clock frequency\n");
+		/* Hardcode value we 'know' is correct */
+		counter_freq = 48000000 / 4;
 	}
 
 	/*

@@ -142,7 +142,7 @@ readreg(uint32_t reg)
 	#define JZ_PDIV_S	16		/* PCLK divider shift */
 	#define JZ_CDIV_M	0x0000000f	/* CPU clock divider mask */
 	#define JZ_CDIV_S	0		/* CPU clock divider shift */
-#define JZ_CPACPR	0x00000010	/* APLL */
+#define JZ_CPAPCR	0x00000010	/* APLL */
 #define JZ_CPMPCR	0x00000014	/* MPLL */
 #define JZ_CPEPCR	0x00000018	/* EPLL */
 #define JZ_CPVPCR	0x0000001C	/* VPLL */
@@ -268,6 +268,7 @@ readreg(uint32_t reg)
 	#define PCR_REFCLK_CORE	0x0c000000
 	#define PCR_REFCLK_XO25	0x04000000
 	#define PCR_REFCLK_CO	0x00000000
+	#define PCR_REFCLK_M	0x0c000000
 	#define PCR_CLK_M	0x03000000	/* clock */
 	#define PCR_CLK_192	0x03000000	/* 19.2MHz */
 	#define PCR_CLK_48	0x02000000	/* 48MHz */

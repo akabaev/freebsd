@@ -33,15 +33,18 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/module.h>
 
+#include <dev/clk/clk_fixed.h>
+
 #include <dev/fdt/fdt_common.h>
-#include <dev/fdt/fdt_clock.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
 /* Simple placeholder driver for fixed clocks */
 
 struct fixed_clock_softc {
-	uint32_t frequency;
+	struct mtx	mtx;
+	struct clkdom	*clkdom;
+	uint32_t	frequency;
 };
 
 static int
@@ -62,10 +65,13 @@ fixed_clock_probe(device_t dev)
 static int
 fixed_clock_attach(device_t dev)
 {
-	struct fixed_clock_softc *sc = device_get_softc(dev);
+	struct fixed_clock_softc *sc;
+	struct clk_fixed_def cdef;
 	phandle_t node;
 	pcell_t freq;
+	int rv;
 
+	sc = device_get_softc(dev);
 	node = ofw_bus_get_node(dev);
 
 	if (OF_getencprop(node, "clock-frequency", &freq, sizeof(freq)) <= 0) {
@@ -73,48 +79,38 @@ fixed_clock_attach(device_t dev)
 		return (ENXIO);
 	}
 
+	mtx_init(&sc->mtx, device_get_nameunit(dev), "fclock", MTX_DEF);
 	sc->frequency = freq;
-	device_printf(dev, "frequency %u HZ\n", freq);
-	return 0;
-}
 
-static int
-fixed_clock_enable(device_t dev, int index)
-{
+	sc->clkdom = clkdom_create(dev);
+	if (sc->clkdom == NULL)
+		goto fail;
+	/* Fixed clock has no parents and only one clock module */
+	cdef.clkdef.id = 1;
+	cdef.clkdef.name = __DECONST(char *, ofw_bus_get_name(dev));
+	cdef.clkdef.parent_names = NULL;
+	cdef.clkdef.parents_num = 0;
+	cdef.clkdef.flags = CLK_FLAGS_STATIC;
+	cdef.freq = freq;
+	cdef.mult = 1;
+	cdef.div = 1;
+	rv = clknode_fixed_register(sc->clkdom, &cdef, &sc->mtx);
+	if (rv != 0)
+		goto fail;
+	clkdom_finit(sc->clkdom);
 
-	return (0);
-}
-
-static int
-fixed_clock_disable(device_t dev, int index)
-{
-
-	return (0);
-}
-
-static int
-fixed_clock_get_info(device_t dev, int index, struct fdt_clock_info *info)
-{
-	struct fixed_clock_softc *sc = device_get_softc(dev);
-
-	/* We are always running */
-	info->index = 0;
-	info->flags = FDT_CIFLAG_RUNNING;
-	info->frequency = sc->frequency;
-	info->name = ofw_bus_get_name(dev);
+	device_printf(dev, "%s clock frequency is %u HZ\n",
+	    ofw_bus_get_name(dev), freq);
 
 	return (0);
+fail:
+	return (ENXIO);
 }
 
 static device_method_t fixed_clock_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, fixed_clock_probe),
 	DEVMETHOD(device_attach, fixed_clock_attach),
-
-	/* fdt_clock interface */
-	DEVMETHOD(fdt_clock_enable,	fixed_clock_enable),
-	DEVMETHOD(fdt_clock_disable,	fixed_clock_disable),
-	DEVMETHOD(fdt_clock_get_info,	fixed_clock_get_info),
 
 	DEVMETHOD_END
 };
@@ -128,4 +124,4 @@ static driver_t fixed_clock_driver = {
 static devclass_t fixed_clock_devclass;
 
 EARLY_DRIVER_MODULE(fixedclock, simplebus, fixed_clock_driver,
-    fixed_clock_devclass, 0, 0, BUS_PASS_TIMER);
+    fixed_clock_devclass, 0, 0, BUS_PASS_CPU + BUS_PASS_ORDER_LATE);
