@@ -32,15 +32,15 @@ options		NFSLOCKD		#Network Lock Manager
 options 	PSEUDOFS		#Pseudo-filesystem framework
 options 	_KPOSIX_PRIORITY_SCHEDULING #Posix P1003_1B real-time extensions
 
-#options 	FFS			#Berkeley Fast Filesystem
-#options 	SOFTUPDATES		#Enable FFS soft updates support
-#options 	UFS_ACL			#Support for access control lists
-#options 	UFS_DIRHASH		#Improve performance on big directories
+options 	FFS			#Berkeley Fast Filesystem
+options 	SOFTUPDATES		#Enable FFS soft updates support
+options 	UFS_ACL			#Support for access control lists
+options 	UFS_DIRHASH		#Improve performance on big directories
 #options 	ROOTDEVNAME=\"ufs:ada0\"
 
-#options 	GEOM_LABEL		# Provides labelization
-#options 	GEOM_PART_GPT		# GUID Partition Tables.
-#options 	GEOM_RAID		# Soft RAID functionality.
+options 	GEOM_LABEL		# Provides labelization
+options 	GEOM_PART_GPT		# GUID Partition Tables.
+options 	GEOM_RAID		# Soft RAID functionality.
 
 # Debugging for use in -current
 #options 	DEADLKRES		#Enable the deadlock resolver
@@ -68,8 +68,12 @@ device		fdt_regulator_fixed
 
 device		gpio
 
+device 		scbus
+device 		da
+
 # USB support
 options 	USB_DEBUG	# enable debug msgs
+options 	USB_HOST_ALIGN=32
 device		uhci		# UHCI PCI->USB interface
 device		ohci		# OHCI PCI->USB interface
 #device		ehci		# EHCI PCI->USB interface (USB 2.0)
@@ -77,5 +81,5 @@ device		usb		# USB Bus (required)
 #device		udbp		# USB Double Bulk Pipe devices
 device		uhid		# "Human Interface Devices"
 #device		ulpt		# Printer
-#device		umass		# Disks/Mass storage - Requires scbus and da
+device		umass		# Disks/Mass storage - Requires scbus and da
 device		ums		# Mouse
