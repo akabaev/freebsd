@@ -668,6 +668,11 @@ dme_attach(device_t dev)
 		goto fail;
 	}
 
+	/*
+	 * Delay a little.  This seems required on rev-1 boards (green.)
+	 */
+	DELAY(1000);
+
 	/* Bring controller out of reset */
 	error = ofw_gpiobus_parse_gpios(dev, "reset-gpios", &sc->gpio_rset);
 	if (error > 1) {
