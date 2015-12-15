@@ -261,7 +261,7 @@ jz4780_gpio_pin_probe(struct jz4780_gpio_softc *sc, uint32_t pin)
 		/* Pin is in gpio mode, decode direction and bias */
 		val = CSR_READ_4(sc, JZ_GPIO_PAT1);
 		if (val & mask)
-			sc->pins[pin].pin_flags |= GPIO_PIN_OUTPUT;
+			sc->pins[pin].pin_flags |= GPIO_PIN_INPUT;
 		else
 			sc->pins[pin].pin_flags |= GPIO_PIN_OUTPUT;
 		/* Check for bias */
