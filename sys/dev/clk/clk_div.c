@@ -129,7 +129,7 @@ clknode_div_set_freq(struct clknode *clk, uint64_t fin, uint64_t *fout,
 
 	/* For fractional divider. */
 	_fin = fin << sc->f_width;
-	divider = _fin / *fout;
+	divider = (_fin + *fout / 2) / *fout;
 	_fout = _fin / divider;
 
 	/* Rounding */
@@ -166,12 +166,11 @@ clknode_div_set_freq(struct clknode *clk, uint64_t fin, uint64_t *fout,
 		i_div++;
 	divider = i_div << sc->f_width | f_div;
 
-	if ((*stop != 0) &&
-	    ((flags & (CLK_SET_ROUND_UP | CLK_SET_ROUND_DOWN)) == 0) &&
-	    (*fout != (_fin / divider)))
-		return (ERANGE);
-
 	if ((flags & CLK_SET_TEST_RUN) == 0) {
+		if ((*stop != 0) &&
+		    ((flags & (CLK_SET_ROUND_UP | CLK_SET_ROUND_DOWN)) == 0) &&
+		    (*fout != (_fin / divider)))
+			return (ERANGE);
 		reg = RD4(sc, sc->offset);
 		reg &= ~(sc->i_mask << sc->i_shift);
 		reg |= i_div << sc->i_shift;

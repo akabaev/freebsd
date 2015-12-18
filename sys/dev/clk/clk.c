@@ -611,11 +611,6 @@ clknode_set_parent(struct clknode *clknode, int idx)
 	if (clknode->parents_num == 0)
 		return (0);
 
-	if (clknode->parents_num == 1) {
-		clknode_set_parent(clknode->parent, idx);
-		return (0);
-	}
-
 	if (clknode->parent_idx == idx)
 		return (0);
 
@@ -647,9 +642,15 @@ clknode_set_parent_by_name(struct clknode *clknode, const char *name)
 	if (clknode->parents_num == 0)
 		return (0);
 
+	/*
+	 * If this node doesnt have mux, then passthrow request to parent.
+	 * This feature is used in clock domain initialization and allow
+	 * us to set clock source and target frequency on tail node of
+	 * clock chain.
+	 */
 	if (clknode->parents_num == 1) {
-		clknode_set_parent_by_name(clknode->parent, name);
-		return (0);
+		rv = clknode_set_parent_by_name(clknode->parent, name);
+		return (rv);
 	}
 
 	for (idx = 0; idx < clknode->parents_num; idx++) {
@@ -978,7 +979,7 @@ clk_set_freq(clk_t clk, uint64_t freq, int flags)
 	   ("Attempt to access unreferenced clock: %s\n", clknode->name));
 
 	CLK_TOPO_XLOCK();
-	rv = clknode_set_freq(clknode, freq, flags, INT_MAX);
+	rv = clknode_set_freq(clknode, freq, flags, clk->enable_cnt);
 	CLK_TOPO_UNLOCK();
 	return (rv);
 }
@@ -1187,7 +1188,6 @@ clk_get_by_ofw_index(phandle_t cnode, int idx, clk_t *clk)
 
 	rv = clkdom->ofw_mapper(clkdom, ncells, cells, &clknode);
 	if (rv == 0) {
-printf("%s:,  got clock %s(id: %d)\n", __func__, clknode->name, clknode->id);
 		*clk = clk_create(clknode);
 printf("%s:,  got clock %s(id: %d)\n", __func__, clknode->name, clknode->id);
 	}
