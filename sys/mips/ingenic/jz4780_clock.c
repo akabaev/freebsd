@@ -51,6 +51,7 @@ __FBSDID("$FreeBSD$");
 
 #include <mips/ingenic/jz4780_clk.h>
 #include <mips/ingenic/jz4780_regs.h>
+#include <mips/ingenic/jz4780_clock.h>
 
 #include <gnu/dts/include/dt-bindings/clock/jz4780-cgu.h>
 
