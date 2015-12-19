@@ -111,8 +111,9 @@ int clknode_disable(struct clknode *clknode);
 int clknode_stop(struct clknode *clknode, int depth);
 
 /* Clock consumers interface */
-int clk_get_by_name(const char *name, clk_t *clk);
-int clk_get_by_id(struct clkdom *clkdom, intptr_t id, clk_t *clk);
+int clk_get_by_name(device_t cdev, const char *name, clk_t *clk);
+int clk_get_by_id(device_t cdev, struct clkdom *clkdom, intptr_t id,
+    clk_t *clk);
 int clk_release(clk_t clk);
 int clk_get_freq(clk_t clk, uint64_t *freq);
 int clk_set_freq(clk_t clk, uint64_t freq, int flags);
@@ -124,8 +125,8 @@ int clk_get_parent(clk_t clk, clk_t *parent);
 int clk_set_parent_by_clk(clk_t clk, clk_t parent);
 
 #ifdef FDT
-int clk_get_by_ofw_index(phandle_t node, int idx, clk_t *clk);
-int clk_get_by_ofw_name(phandle_t node, char *name, clk_t *clk);
+int clk_get_by_ofw_index(device_t cdev, int idx, clk_t *clk);
+int clk_get_by_ofw_name(device_t cdev, char *name, clk_t *clk);
 #endif
 
 #endif /* _DEV_CLK_H_ */

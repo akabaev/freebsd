@@ -125,6 +125,7 @@ struct clknode {
  *  Per consumer data. This structre is used as handle in consumer interface.
  */
 struct clk {
+	device_t	cdev;
 	struct clknode	*clknode;
 	int		enable_cnt;
 };
@@ -937,13 +938,14 @@ clknode_stop(struct clknode *clknode, int depth)
  */
 /* Helper function for clk_get*() */
 static clk_t
-clk_create(struct clknode *clknode)
+clk_create(struct clknode *clknode, device_t cdev)
 {
 	struct clk *clk;
 
 	CLK_TOPO_ASSERT();
 
 	clk =  malloc(sizeof(struct clk), M_CLOCK, M_WAITOK);
+	clk->cdev = cdev;
 	clk->clknode = clknode;
 	clk->enable_cnt = 0;
 	clknode->ref_cnt++;
@@ -1017,7 +1019,7 @@ clk_get_parent(clk_t clk, clk_t *parent)
 		CLK_TOPO_UNLOCK();
 		return (ENODEV);
 	}
-	*parent = clk_create(parentnode);
+	*parent = clk_create(parentnode, clk->cdev);
 	CLK_TOPO_UNLOCK();
 	return (0);
 }
@@ -1118,7 +1120,7 @@ clk_release(clk_t clk)
 }
 
 int
-clk_get_by_name(const char *name, clk_t *clk)
+clk_get_by_name(device_t cdev, const char *name, clk_t *clk)
 {
 	struct clknode *clknode;
 
@@ -1128,13 +1130,13 @@ clk_get_by_name(const char *name, clk_t *clk)
 		CLK_TOPO_UNLOCK();
 		return (ENODEV);
 	}
-	*clk = clk_create(clknode);
+	*clk = clk_create(clknode, cdev);
 	CLK_TOPO_UNLOCK();
 	return (0);
 }
 
 int
-clk_get_by_id(struct clkdom *clkdom, intptr_t id, clk_t *clk)
+clk_get_by_id(device_t cdev, struct clkdom *clkdom, intptr_t id, clk_t *clk)
 {
 	struct clknode *clknode;
 
@@ -1145,7 +1147,7 @@ clk_get_by_id(struct clkdom *clkdom, intptr_t id, clk_t *clk)
 		CLK_TOPO_UNLOCK();
 		return (ENODEV);
 	}
-	*clk = clk_create(clknode);
+	*clk = clk_create(clknode, cdev);
 	CLK_TOPO_UNLOCK();
 
 	return (0);
@@ -1154,15 +1156,23 @@ clk_get_by_id(struct clkdom *clkdom, intptr_t id, clk_t *clk)
 #ifdef FDT
 
 int
-clk_get_by_ofw_index(phandle_t cnode, int idx, clk_t *clk)
+clk_get_by_ofw_index(device_t cdev, int idx, clk_t *clk)
 {
-	phandle_t parent, *cells;
+	phandle_t cnode, parent, *cells;
 	device_t clockdev;
 	int ncells, rv;
 	struct clkdom *clkdom;
 	struct clknode *clknode;
 
 	*clk = NULL;
+
+	cnode = ofw_bus_get_node(cdev);
+	if (cnode <= 0) {
+		device_printf(cdev, "%s called on not ofw based device\n",
+		 __func__);
+		return (ENXIO);
+	}
+
 	rv = ofw_bus_parse_xref_list_alloc(cnode, "clocks", "#clock-cells", idx,
 	    &parent, &ncells, &cells);
 	if (rv != 0) {
@@ -1188,7 +1198,7 @@ clk_get_by_ofw_index(phandle_t cnode, int idx, clk_t *clk)
 
 	rv = clkdom->ofw_mapper(clkdom, ncells, cells, &clknode);
 	if (rv == 0) {
-		*clk = clk_create(clknode);
+		*clk = clk_create(clknode, cdev);
 printf("%s:,  got clock %s(id: %d)\n", __func__, clknode->name, clknode->id);
 	}
 	CLK_TOPO_UNLOCK();
@@ -1200,13 +1210,20 @@ done:
 }
 
 int
-clk_get_by_ofw_name(phandle_t cnode, char *name, clk_t *clk)
+clk_get_by_ofw_name(device_t cdev, char *name, clk_t *clk)
 {
 	int rv, idx;
+	phandle_t cnode;
 
+	cnode = ofw_bus_get_node(cdev);
+	if (cnode <= 0) {
+		device_printf(cdev, "%s called on not ofw based device\n",
+		 __func__);
+		return (ENXIO);
+	}
 	rv = ofw_bus_find_string_index(cnode, "clock-names", name, &idx);
 	if (rv != 0)
 		return (rv);
-	return (clk_get_by_ofw_index(cnode, idx, clk));
+	return (clk_get_by_ofw_index(cdev, idx, clk));
 }
 #endif
