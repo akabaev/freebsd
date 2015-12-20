@@ -38,6 +38,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/gpio.h>
 
+#include <dev/clk/clk.h>
+
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 
@@ -56,6 +58,7 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/gpio/gpiobusvar.h>
 
+#include <mips/ingenic/jz4780_clock.h>
 #include <mips/ingenic/jz4780_regs.h>
 
 static int jz4780_ohci_attach(device_t dev);
@@ -66,6 +69,7 @@ struct jz4780_ohci_softc
 {
 	struct ohci_softc sc_ohci;
 	struct gpiobus_pin *gpio_vbus;
+	clk_t clk;
 };
 
 static int
@@ -85,9 +89,18 @@ jz4780_ohci_probe(device_t dev)
 static int
 jz4780_ohci_vbus_gpio_enable(device_t dev, struct jz4780_ohci_softc *sc)
 {
+	struct gpiobus_pin *gpio_vbus;
 	int error;
 
-	error = ofw_gpiobus_parse_gpios(dev, "ingenic,vbus-gpio", &sc->gpio_vbus);
+	error = ofw_gpiobus_parse_gpios(dev, "ingenic,vbus-gpio", &gpio_vbus);
+	/*
+	 * The pin can be mapped already by other device. Assume it also has need
+	 * activated and proceed happily.
+	 */
+	if (error <= 0)
+		return (0);
+
+	sc->gpio_vbus = gpio_vbus;
 	if (error > 1) {
 		device_printf(dev, "too many vbus gpios\n");
 		return (ENXIO);
@@ -108,6 +121,32 @@ jz4780_ohci_vbus_gpio_enable(device_t dev, struct jz4780_ohci_softc *sc)
 			    sc->gpio_vbus->pin, device_get_nameunit(sc->gpio_vbus->dev));
 			return (error);
 		}
+	}
+	return (0);
+}
+
+static int
+jz4780_ohci_clk_enable(device_t dev)
+{
+	struct jz4780_ohci_softc *sc;
+	int err;
+
+	sc = device_get_softc(dev);
+
+	err = clk_get_by_ofw_index(dev, 0, &sc->clk);
+	if (err != 0) {
+		device_printf(dev, "unable to lookup device clock\n");
+		return (err);
+	}
+	err = clk_enable(sc->clk);
+	if (err != 0) {
+		device_printf(dev, "unable to enable device clock\n");
+		return (err);
+	}
+	err = clk_set_freq(sc->clk, 48000000, 0);
+	if (err != 0) {
+		device_printf(dev, "unable to set device clock to 48 kHZ\n");
+		return (err);
 	}
 	return (0);
 }
@@ -138,6 +177,10 @@ jz4780_ohci_attach(device_t dev)
 	if (err)
 		goto error;
 
+	err = jz4780_ohci_clk_enable(dev);
+	if (err)
+		goto error;
+
 	rid = 0;
 	sc->sc_ohci.sc_io_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE);
@@ -156,6 +199,13 @@ jz4780_ohci_attach(device_t dev)
 		err = ENOMEM;
 		goto error;
 	}
+
+	if (jz4780_ohci_enable() != 0) {
+		device_printf(dev, "CGU failed to enable OHCI\n");
+		err = ENXIO;
+		goto error;
+	}
+
 	sc->sc_ohci.sc_bus.bdev = device_add_child(dev, "usbus", -1);
 	if (sc->sc_ohci.sc_bus.bdev == NULL) {
 		err = ENOMEM;
@@ -183,10 +233,8 @@ jz4780_ohci_attach(device_t dev)
 	return (0);
 
 error:
-	if (err) {
+	if (err)
 		jz4780_ohci_detach(dev);
-		return (err);
-	}
 	return (err);
 }
 
@@ -213,8 +261,10 @@ jz4780_ohci_detach(device_t dev)
 	 * clocks after we disable them, so the system could, in
 	 * theory, reuse them.
 	 */
-	bus_space_write_4(sc->sc_ohci.sc_io_tag, sc->sc_ohci.sc_io_hdl,
-	    OHCI_CONTROL, 0);
+	if (sc->sc_ohci.sc_io_res != NULL) {
+		bus_space_write_4(sc->sc_ohci.sc_io_tag, sc->sc_ohci.sc_io_hdl,
+		    OHCI_CONTROL, 0);
+	}
 
 	if (sc->sc_ohci.sc_intr_hdl) {
 		bus_teardown_intr(dev, sc->sc_ohci.sc_irq_res, sc->sc_ohci.sc_intr_hdl);
@@ -236,6 +286,10 @@ jz4780_ohci_detach(device_t dev)
 		sc->sc_ohci.sc_io_tag = 0;
 		sc->sc_ohci.sc_io_hdl = 0;
 	}
+
+	if (sc->clk != NULL)
+		clk_release(sc->clk);
+
 	usb_bus_mem_free_all(&sc->sc_ohci.sc_bus, &ohci_iterate_hw_softc);
 	free(sc->gpio_vbus, M_DEVBUF);
 	return (0);
