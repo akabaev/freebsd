@@ -264,7 +264,14 @@ readreg(uint32_t reg)
 	#define PCR_TXHSXVTUNE		0x00000030
 	#define PCR_TXVREFTUNE		0x0000000f
 #define JZ_USBRDT	0x00000040	/* Reset detect timer register */
+	#define USBRDT_USBRDT_SHIFT	0
+	#define USBRDT_USBRDT_WIDTH	23
+	#define USBRDT_VBFIL_LD_EN	0x01000000
 #define JZ_USBVBFIL	0x00000044	/* USB jitter filter register */
+	#define USBVBFIL_IDDIGFIL_SHIFT 16
+	#define USBVBFIL_IDDIGFIL_WIDTH 16
+	#define USBVBFIL_USBVBFIL_SHIFT 0
+	#define USBVBFIL_USBVBFIL_WIDTH 16
 #define JZ_USBPCR1	0x00000048	/* USB parameter control register 1 */
 	#define PCR_SYNOPSYS	0x10000000	/* Mentor mode otherwise */
 	#define PCR_REFCLK_CORE	0x08000000
@@ -372,7 +379,9 @@ readreg(uint32_t reg)
 #define JZ_EHCI_REG_UTMI_BUS 0x000000b0
 	#define UTMI_BUS_WIDTH	0x00000040
 #define JZ_OHCI_BASE	0x134a0000
+
 #define JZ_DWC2_BASE	0x13500000
+#define JZ_DWC2_GUSBCFG  0
 
 /* Ethernet */
 #define JZ_DME_BASE	0x16000000

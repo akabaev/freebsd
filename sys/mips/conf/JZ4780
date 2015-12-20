@@ -41,7 +41,7 @@ options 	UFS_DIRHASH		#Improve performance on big directories
 
 options 	GEOM_LABEL		# Provides labelization
 options 	GEOM_PART_GPT		# GUID Partition Tables.
-options 	GEOM_RAID		# Soft RAID functionality.
+#options 	GEOM_RAID		# Soft RAID functionality.
 
 # Debugging for use in -current
 #options 	DEADLKRES		#Enable the deadlock resolver
@@ -74,9 +74,9 @@ device 		da
 # USB support
 options 	USB_DEBUG	# enable debug msgs
 options 	USB_HOST_ALIGN=32
-#device		uhci		# UHCI PCI->USB interface
 device		ohci		# OHCI PCI->USB interface
 device		ehci		# EHCI PCI->USB interface (USB 2.0)
+device		dwcotg		# DesignWare HS OTG controller
 device		usb		# USB Bus (required)
 #device		udbp		# USB Double Bulk Pipe devices
 device		uhid		# "Human Interface Devices"

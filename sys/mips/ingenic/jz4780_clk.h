@@ -32,6 +32,13 @@
 #include <dev/clk/clk.h>
 #include <dev/clk/clk_gate.h>
 
+/* Convenience bitfiled manipulation macros */
+#define REG_MSK(field)			(((1u << field ## _WIDTH) - 1) << field ##_SHIFT)
+#define REG_VAL(field, val)		((val) << field ##_SHIFT)
+#define REG_CLR(reg, field)		((reg) & ~REG_MSK(field))
+#define REG_GET(reg, field)		(((reg) & REG_MSK(field)) >> field ##_SHIFT)
+#define REG_SET(reg, field, val)	(REG_CLR(reg, field) | REG_VAL(field, val))
+
 /* Common clock macros */
 #define	CLK_LOCK(_sc)	mtx_lock((_sc)->clk_mtx)
 #define	CLK_UNLOCK(_sc)	mtx_unlock((_sc)->clk_mtx)

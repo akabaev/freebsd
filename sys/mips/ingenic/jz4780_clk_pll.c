@@ -44,13 +44,6 @@ __FBSDID("$FreeBSD$");
 
 #include <mips/ingenic/jz4780_clk.h>
 
-/* Convenience bitfiled manipulation macros */
-#define REG_MSK(field)			(((1u << field ## _WIDTH) - 1) << field ##_SHIFT)
-#define REG_VAL(field, val)		((val) << field ##_SHIFT)
-#define REG_CLR(reg, field)		((reg) & ~REG_MSK(field))
-#define REG_GET(reg, field)		(((reg) & REG_MSK(field)) >> field ##_SHIFT)
-#define REG_SET(reg, field, val)	(REG_CLR(reg, field) | REG_VAL(field, val))
-
 /**********************************************************************
  *  JZ4780 PLL control register bit fields
  **********************************************************************/
