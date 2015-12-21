@@ -322,6 +322,7 @@ dme_start_locked(struct ifnet *ifp)
 		 * TODO: Fix the case where an mbuf is
 		 * not a multiple of the write size.
 		 */
+
 		total_len = 0;
 		for (mp = m; mp != NULL; mp = mp->m_next) {
 			len = mp->m_len;
@@ -332,13 +333,26 @@ dme_start_locked(struct ifnet *ifp)
 
 			total_len += len;
 
-#if 0
-			bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
-#else
-			bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint8_t *), len);
-#endif
+			/*
+			 * Note: this only works where mbuf buffers are
+			 * a multiple of the IO size.  Otherwise it will
+			 * write out padding bytes between each mbuf buffer
+			 * and .. well, fail.
+			 */
+			switch (sc->dme_bits) {
+			case 8:
+				bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint8_t *), len);
+				break;
+			case 16:
+				bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
+				break;
+			case 32:
+				bus_space_write_multi_4(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint32_t *), (len + 3) / 4);
+				break;
+			}
 		}
 
 		/* Send the data length */
@@ -463,13 +477,21 @@ dme_rxeof(struct dme_softc *sc)
 	/* Read the data */
 	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
 	    BUS_SPACE_BARRIER_READ);
-#if 0
-	bus_space_read_multi_2(sc->dme_tag, sc->dme_handle, DATA_ADDR,
-	    mtod(m, uint16_t *), (len + 1) / 2);
-#else
-	bus_space_read_multi_1(sc->dme_tag, sc->dme_handle, DATA_ADDR,
-	    mtod(m, uint8_t *), len);
-#endif
+	switch (sc->dme_bits) {
+	case 8:
+		bus_space_read_multi_1(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint8_t *), len);
+		break;
+	case 16:
+		bus_space_read_multi_2(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint16_t *), (len + 1) / 2);
+		break;
+	case 32:
+		bus_space_read_multi_4(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint32_t *), (len + 3) / 4);
+		break;
+	}
+
 	if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
 	DME_UNLOCK(sc);
 	(*ifp->if_input)(ifp, m);
@@ -748,6 +770,11 @@ dme_attach(device_t dev)
 	}
 
 	/* Figure IO mode */
+
+	/*
+	 * This delay is also needed before reading ISR reliably!
+	 */
+	DELAY(1000);
 	switch((dme_read_reg(sc, DME_ISR) >> 6) & 0x03) {
 	case 0:
 		/* 16 bit */
