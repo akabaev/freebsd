@@ -752,6 +752,8 @@ dme_attach(device_t dev)
 		goto fail;
 	}
 
+	device_printf(dev, "IO size: %d bits\n", sc->dme_bits);
+
 	/* Read vendor and device id's */
 	data = dme_read_reg(sc, DME_VIDH) << 8;
 	data |= dme_read_reg(sc, DME_VIDL);
