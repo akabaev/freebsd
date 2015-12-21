@@ -797,7 +797,7 @@ dme_attach(device_t dev)
 	/*
 	 * This delay is also needed before reading ISR reliably!
 	 */
-	DELAY(1000);
+	DELAY(10 * 1000);
 	switch((dme_read_reg(sc, DME_ISR) >> 6) & 0x03) {
 	case 0:
 		/* 16 bit */
