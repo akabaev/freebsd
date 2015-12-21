@@ -124,7 +124,8 @@ dme_read_reg(struct dme_softc *sc, uint8_t reg)
 
 	/* Send the register to read from */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
-
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
 	/* Get the value of the register */
 	return bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR);
 }
@@ -135,9 +136,13 @@ dme_write_reg(struct dme_softc *sc, uint8_t reg, uint8_t value)
 
 	/* Send the register to write to */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE);
 
 	/* Write the value to the register */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, DATA_ADDR, value);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE);
 }
 
 static void
@@ -309,6 +314,8 @@ dme_start_locked(struct ifnet *ifp)
 		/* Write the data to the network */
 		bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR,
 		    DME_MWCMD);
+		bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+		    BUS_SPACE_BARRIER_WRITE);
 
 		/*
 		 * TODO: Fix the case where an mbuf is
@@ -387,7 +394,11 @@ dme_rxeof(struct dme_softc *sc)
 
 	/* Read the first byte to check it correct */
 	(void)dme_read_reg(sc, DME_MRCMDX);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
 	i = bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
 	switch(bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR)) {
 	case 1:
 		/* Correct value */
@@ -405,6 +416,8 @@ dme_rxeof(struct dme_softc *sc)
 	len = dme_read_reg(sc, DME_ROCR);
 
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, DME_MRCMD);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
 	len = 0;
 	switch(sc->dme_bits) {
 	case 8:
@@ -447,6 +460,8 @@ dme_rxeof(struct dme_softc *sc)
 	m_adj(m, ETHER_ALIGN);
 
 	/* Read the data */
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
 #if 0
 	bus_space_read_multi_2(sc->dme_tag, sc->dme_handle, DATA_ADDR,
 	    mtod(m, uint16_t *), (len + 1) / 2);
