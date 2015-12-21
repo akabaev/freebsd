@@ -97,6 +97,8 @@ xlp_sync(void)
  */
 int mips_picache_linesize;
 int mips_pdcache_linesize;
+int mips_scache_linesize;
+int mips_dcache_max_linesize;
 
 static int picache_size;
 static int picache_stride;
@@ -147,6 +149,10 @@ mipsNN_cache_init(struct mips_cpuinfo * cpuinfo)
 	mips_picache_linesize = cpuinfo->l1.ic_linesize;
 	mips_pdcache_linesize = cpuinfo->l1.dc_linesize;
 
+	/* Defaults */
+	mips_scache_linesize = 0;
+	mips_dcache_max_linesize = mips_pdcache_linesize;
+
 	picache_size = cpuinfo->l1.ic_size;
 	picache_way_mask = cpuinfo->l1.ic_nways - 1;
 	pdcache_size = cpuinfo->l1.dc_size;
@@ -157,6 +163,12 @@ mipsNN_cache_init(struct mips_cpuinfo * cpuinfo)
 	sdcache_size = cpuinfo->l2.dc_size;
 	sdcache_way_mask = cpuinfo->l2.dc_nways - 1;
 
+	if (cpuinfo->l2.dc_size) {
+		mips_scache_linesize = cpuinfo->l2.dc_linesize;
+		if (cpuinfo->l2.dc_linesize > mips_dcache_max_linesize)
+			mips_dcache_max_linesize = cpuinfo->l2.dc_linesize;
+	}
+
 #define CACHE_DEBUG
 #ifdef CACHE_DEBUG
 	printf("Cache info:\n");
@@ -166,6 +178,7 @@ mipsNN_cache_init(struct mips_cpuinfo * cpuinfo)
 	printf("  picache_loopcount = %d\n", picache_loopcount);
 	printf("  pdcache_stride    = %d\n", pdcache_stride);
 	printf("  pdcache_loopcount = %d\n", pdcache_loopcount);
+	printf("  max line size     = %d\n", mips_dcache_max_linesize);
 #endif
 }
 
