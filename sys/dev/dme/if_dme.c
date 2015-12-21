@@ -334,6 +334,7 @@ dme_start_locked(struct ifnet *ifp)
 				sc->dme_stats.tx_pkts_defrag_fail++;
 				continue;
 			}
+			m = m2;
 		}
 
 		/* Wait for the device to be free */
