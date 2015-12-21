@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
+#include <vm/uma.h>
 
 #include <machine/cache.h>
 #include <machine/cpufunc.h>
@@ -226,6 +227,7 @@ mips_cpu_init(void)
 	tlb_invalidate_all();
 	mips_wr_wired(VMWIRED_ENTRIES);
 	mips_config_cache(&cpuinfo);
+	uma_set_align(mips_dcache_max_linesize);
 	mips_vector_init();
 
 	mips_icache_sync_all();
