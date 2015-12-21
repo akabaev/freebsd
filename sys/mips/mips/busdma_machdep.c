@@ -1015,10 +1015,10 @@ _bus_dmamap_unload(bus_dma_tag_t dmat, bus_dmamap_t map)
 static void
 bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op)
 {
-	char tmp_cl[mips_pdcache_linesize], tmp_clend[mips_pdcache_linesize];
+	char tmp_cl[mips_dcache_max_linesize], tmp_clend[mips_dcache_max_linesize];
 	vm_offset_t buf_cl, buf_clend;
 	vm_size_t size_cl, size_clend;
-	int cache_linesize_mask = mips_pdcache_linesize - 1;
+	int cache_linesize_mask = mips_dcache_max_linesize - 1;
 
 	/*
 	 * dcache invalidation operates on cache line aligned addresses
@@ -1030,7 +1030,7 @@ bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op)
 	buf_cl = buf & ~cache_linesize_mask;
 	size_cl = buf & cache_linesize_mask;
 	buf_clend = buf + len;
-	size_clend = (mips_pdcache_linesize - 
+	size_clend = (mips_dcache_max_linesize -
 	    (buf_clend & cache_linesize_mask)) & cache_linesize_mask;
 
 	switch (op) {
@@ -1061,7 +1061,7 @@ bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op)
 		if (size_cl)
 			mips_dcache_wbinv_range(buf_cl, size_cl);
 		if (size_clend && (size_cl == 0 ||
-                    buf_clend - buf_cl > mips_pdcache_linesize))
+                    buf_clend - buf_cl > mips_dcache_max_linesize))
 			mips_dcache_wbinv_range(buf_clend, size_clend);
 		break;
 
@@ -1094,7 +1094,7 @@ bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op)
 		if (size_cl)
 			mips_dcache_wbinv_range(buf_cl, size_cl);
 		if (size_clend && (size_cl == 0 ||
-                    buf_clend - buf_cl > mips_pdcache_linesize))
+                    buf_clend - buf_cl > mips_dcache_max_linesize))
 			mips_dcache_wbinv_range(buf_clend, size_clend);
 		break;
 
