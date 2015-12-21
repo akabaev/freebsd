@@ -94,6 +94,9 @@ struct dme_softc {
 	struct gpiobus_pin	*gpio_rset;
 	uint32_t		dme_ticks;
 	uint8_t			dme_macaddr[ETHER_ADDR_LEN];
+	struct {
+		uint64_t	tx_pkts_defrag_fail;
+	} dme_stats;
 };
 
 #define DME_CHIP_DM9000		0x00
@@ -295,6 +298,7 @@ dme_start_locked(struct ifnet *ifp)
 	struct dme_softc *sc;
 	struct mbuf *m, *mp;
 	int len, total_len;
+	int do_defrag;
 
 	sc = ifp->if_softc;
 
@@ -308,6 +312,30 @@ dme_start_locked(struct ifnet *ifp)
 		if (m == NULL)
 			break;
 
+		/*
+		 * Fix the case where an mbuf is not a multiple of the
+		 * write size.
+		 */
+		do_defrag = 0;
+		for (mp = m; mp != NULL; mp = mp->m_next) {
+			if (mp->m_len == 0)
+				continue;
+			if (mp->m_len % (sc->dme_bits / 8) != 0) {
+				do_defrag = 1;
+				break;
+			}
+		}
+
+		if (do_defrag) {
+			struct mbuf *m2;
+			m2 = m_defrag(m, M_NOWAIT);
+			if (m2 == NULL) {
+				m_freem(m);
+				sc->dme_stats.tx_pkts_defrag_fail++;
+				continue;
+			}
+		}
+
 		/* Wait for the device to be free */
 		while (dme_read_reg(sc, DME_TCR) & TCR_TXREQ)
 			DELAY(1);
@@ -317,11 +345,6 @@ dme_start_locked(struct ifnet *ifp)
 		    DME_MWCMD);
 		bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
 		    BUS_SPACE_BARRIER_WRITE);
-
-		/*
-		 * TODO: Fix the case where an mbuf is
-		 * not a multiple of the write size.
-		 */
 
 		total_len = 0;
 		for (mp = m; mp != NULL; mp = mp->m_next) {
