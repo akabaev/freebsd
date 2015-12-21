@@ -73,7 +73,7 @@ device 		da
 
 # USB support
 options 	USB_DEBUG	# enable debug msgs
-options 	USB_HOST_ALIGN=32
+options 	USB_HOST_ALIGN=128
 device		uhci		# UHCI PCI->USB interface
 device		ohci		# OHCI PCI->USB interface
 #device		ehci		# EHCI PCI->USB interface (USB 2.0)
