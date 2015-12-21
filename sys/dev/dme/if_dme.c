@@ -99,6 +99,7 @@ struct dme_softc {
 #define DME_CHIP_DM9000		0x00
 #define DME_CHIP_DM9000A	0x19
 #define DME_CHIP_DM9000B	0x1a
+#define	DME_CHIP_DM9000_ID	0x90000A46
 
 #define DME_INT_PHY		1
 
@@ -644,7 +645,7 @@ dme_attach(device_t dev)
 {
 	struct dme_softc *sc;
 	struct ifnet *ifp;
-	int error, rid;
+	int error, rid, i;
 	uint32_t data;
 
 	sc = device_get_softc(dev);
@@ -730,6 +731,21 @@ dme_attach(device_t dev)
 
 	/* Reset the chip as soon as possible */
 	dme_reset(sc);
+
+	/*
+	 * loop over and read the device revision until we get what
+	 * we expect.  Loop until we get it, or 1 second.
+	 */
+	for (i = 0; i < 1000; i++) {
+		data = dme_read_reg(sc, DME_VIDL);
+		data |= dme_read_reg(sc, DME_VIDH) << 8;
+		data |= dme_read_reg(sc, DME_PIDL) << 16;
+		data |= dme_read_reg(sc, DME_PIDH) << 24;
+
+		if (data == DME_CHIP_DM9000_ID)
+			break;
+		DELAY(1000);
+	}
 
 	/* Figure IO mode */
 	switch((dme_read_reg(sc, DME_ISR) >> 6) & 0x03) {
