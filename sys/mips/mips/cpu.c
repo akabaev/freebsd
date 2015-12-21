@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
+#include <vm/uma.h>
 
 #include <machine/cache.h>
 #include <machine/cpufunc.h>
@@ -226,6 +227,7 @@ mips_cpu_init(void)
 	tlb_invalidate_all();
 	mips_wr_wired(VMWIRED_ENTRIES);
 	mips_config_cache(&cpuinfo);
+	uma_set_align(mips_dcache_max_linesize);
 	mips_vector_init();
 
 	mips_icache_sync_all();
@@ -322,6 +324,18 @@ cpu_identify(void)
 		    cpuinfo.l1.dc_nsets, cpuinfo.l1.dc_linesize);
 	}
 
+	printf("  L2 cache: ");
+	if (cpuinfo.l2.dc_linesize == 0) {
+		printf("disabled");
+	} else {
+		printf("%d ways of %d sets, %d bytes per line, "
+		    "%d KiB total size\n",
+		    cpuinfo.l2.dc_nways,
+		    cpuinfo.l2.dc_nsets,
+		    cpuinfo.l2.dc_linesize,
+		    cpuinfo.l2.dc_size / 1024);
+	}
+
 	cfg0 = mips_rd_config();
 	/* If config register selection 1 does not exist, exit. */
 	if (!(cfg0 & MIPS_CONFIG_CM))
@@ -339,6 +353,7 @@ cpu_identify(void)
 	 * Config2 contains no useful information other then Config3 
 	 * existence flag
 	 */
+	printf("  Config2=0x%08x\n", cfg2);
 
 	/* If config register selection 3 does not exist, exit. */
 	if (!(cfg2 & MIPS_CONFIG_CM))

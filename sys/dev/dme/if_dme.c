@@ -94,11 +94,15 @@ struct dme_softc {
 	struct gpiobus_pin	*gpio_rset;
 	uint32_t		dme_ticks;
 	uint8_t			dme_macaddr[ETHER_ADDR_LEN];
+	struct {
+		uint64_t	tx_pkts_defrag_fail;
+	} dme_stats;
 };
 
 #define DME_CHIP_DM9000		0x00
 #define DME_CHIP_DM9000A	0x19
 #define DME_CHIP_DM9000B	0x1a
+#define	DME_CHIP_DM9000_ID	0x90000A46
 
 #define DME_INT_PHY		1
 
@@ -124,7 +128,8 @@ dme_read_reg(struct dme_softc *sc, uint8_t reg)
 
 	/* Send the register to read from */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
-
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
 	/* Get the value of the register */
 	return bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR);
 }
@@ -135,9 +140,13 @@ dme_write_reg(struct dme_softc *sc, uint8_t reg, uint8_t value)
 
 	/* Send the register to write to */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE);
 
 	/* Write the value to the register */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, DATA_ADDR, value);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE);
 }
 
 static void
@@ -289,6 +298,7 @@ dme_start_locked(struct ifnet *ifp)
 	struct dme_softc *sc;
 	struct mbuf *m, *mp;
 	int len, total_len;
+	int do_defrag;
 
 	sc = ifp->if_softc;
 
@@ -302,6 +312,31 @@ dme_start_locked(struct ifnet *ifp)
 		if (m == NULL)
 			break;
 
+		/*
+		 * Fix the case where an mbuf is not a multiple of the
+		 * write size.
+		 */
+		do_defrag = 0;
+		for (mp = m; mp != NULL; mp = mp->m_next) {
+			if (mp->m_len == 0)
+				continue;
+			if (mp->m_len % (sc->dme_bits / 8) != 0) {
+				do_defrag = 1;
+				break;
+			}
+		}
+
+		if (do_defrag) {
+			struct mbuf *m2;
+			m2 = m_defrag(m, M_NOWAIT);
+			if (m2 == NULL) {
+				m_freem(m);
+				sc->dme_stats.tx_pkts_defrag_fail++;
+				continue;
+			}
+			m = m2;
+		}
+
 		/* Wait for the device to be free */
 		while (dme_read_reg(sc, DME_TCR) & TCR_TXREQ)
 			DELAY(1);
@@ -309,11 +344,9 @@ dme_start_locked(struct ifnet *ifp)
 		/* Write the data to the network */
 		bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR,
 		    DME_MWCMD);
+		bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+		    BUS_SPACE_BARRIER_WRITE);
 
-		/*
-		 * TODO: Fix the case where an mbuf is
-		 * not a multiple of the write size.
-		 */
 		total_len = 0;
 		for (mp = m; mp != NULL; mp = mp->m_next) {
 			len = mp->m_len;
@@ -324,13 +357,26 @@ dme_start_locked(struct ifnet *ifp)
 
 			total_len += len;
 
-#if 0
-			bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
-#else
-			bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint8_t *), len);
-#endif
+			/*
+			 * Note: this only works where mbuf buffers are
+			 * a multiple of the IO size.  Otherwise it will
+			 * write out padding bytes between each mbuf buffer
+			 * and .. well, fail.
+			 */
+			switch (sc->dme_bits) {
+			case 8:
+				bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint8_t *), len);
+				break;
+			case 16:
+				bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
+				break;
+			case 32:
+				bus_space_write_multi_4(sc->dme_tag, sc->dme_handle,
+				    DATA_ADDR, mtod(mp, uint32_t *), (len + 3) / 4);
+				break;
+			}
 		}
 
 		/* Send the data length */
@@ -387,7 +433,11 @@ dme_rxeof(struct dme_softc *sc)
 
 	/* Read the first byte to check it correct */
 	(void)dme_read_reg(sc, DME_MRCMDX);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
 	i = bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
 	switch(bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR)) {
 	case 1:
 		/* Correct value */
@@ -405,6 +455,8 @@ dme_rxeof(struct dme_softc *sc)
 	len = dme_read_reg(sc, DME_ROCR);
 
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, DME_MRCMD);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
 	len = 0;
 	switch(sc->dme_bits) {
 	case 8:
@@ -447,13 +499,23 @@ dme_rxeof(struct dme_softc *sc)
 	m_adj(m, ETHER_ALIGN);
 
 	/* Read the data */
-#if 0
-	bus_space_read_multi_2(sc->dme_tag, sc->dme_handle, DATA_ADDR,
-	    mtod(m, uint16_t *), (len + 1) / 2);
-#else
-	bus_space_read_multi_1(sc->dme_tag, sc->dme_handle, DATA_ADDR,
-	    mtod(m, uint8_t *), len);
-#endif
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, 0, 4,
+	    BUS_SPACE_BARRIER_READ);
+	switch (sc->dme_bits) {
+	case 8:
+		bus_space_read_multi_1(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint8_t *), len);
+		break;
+	case 16:
+		bus_space_read_multi_2(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint16_t *), (len + 1) / 2);
+		break;
+	case 32:
+		bus_space_read_multi_4(sc->dme_tag, sc->dme_handle, DATA_ADDR,
+		    mtod(m, uint32_t *), (len + 3) / 4);
+		break;
+	}
+
 	if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
 	DME_UNLOCK(sc);
 	(*ifp->if_input)(ifp, m);
@@ -629,7 +691,7 @@ dme_attach(device_t dev)
 {
 	struct dme_softc *sc;
 	struct ifnet *ifp;
-	int error, rid;
+	int error, rid, i;
 	uint32_t data;
 
 	sc = device_get_softc(dev);
@@ -716,7 +778,27 @@ dme_attach(device_t dev)
 	/* Reset the chip as soon as possible */
 	dme_reset(sc);
 
+	/*
+	 * loop over and read the device revision until we get what
+	 * we expect.  Loop until we get it, or 1 second.
+	 */
+	for (i = 0; i < 1000; i++) {
+		data = dme_read_reg(sc, DME_VIDL);
+		data |= dme_read_reg(sc, DME_VIDH) << 8;
+		data |= dme_read_reg(sc, DME_PIDL) << 16;
+		data |= dme_read_reg(sc, DME_PIDH) << 24;
+
+		if (data == DME_CHIP_DM9000_ID)
+			break;
+		DELAY(1000);
+	}
+
 	/* Figure IO mode */
+
+	/*
+	 * This delay is also needed before reading ISR reliably!
+	 */
+	DELAY(10 * 1000);
 	switch((dme_read_reg(sc, DME_ISR) >> 6) & 0x03) {
 	case 0:
 		/* 16 bit */
@@ -736,6 +818,8 @@ dme_attach(device_t dev)
 		error = ENXIO;
 		goto fail;
 	}
+
+	device_printf(dev, "IO size: %d bits\n", sc->dme_bits);
 
 	/* Read vendor and device id's */
 	data = dme_read_reg(sc, DME_VIDH) << 8;
