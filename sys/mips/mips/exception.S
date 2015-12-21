@@ -645,7 +645,7 @@ NESTED_NOPROFILE(MipsKernIntr, KERN_EXC_FRAME_SIZE, ra)
  */
 	PTR_LA	gp, _C_LABEL(_gp)
 #ifdef MIPS_INTRNG
-	PTR_LA	k0, _C_LABEL(arm_irq_handler)
+	PTR_LA	k0, _C_LABEL(intr_irq_handler)
 #else
 	PTR_LA	k0, _C_LABEL(cpu_intr)
 #endif
@@ -761,7 +761,7 @@ NESTED_NOPROFILE(MipsUserIntr, CALLFRAME_SIZ, ra)
  * Call the interrupt handler.
  */
 #ifdef MIPS_INTRNG
-	PTR_LA	k0, _C_LABEL(arm_irq_handler)
+	PTR_LA	k0, _C_LABEL(intr_irq_handler)
 #else
 	PTR_LA	k0, _C_LABEL(cpu_intr)
 #endif

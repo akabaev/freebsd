@@ -910,18 +910,23 @@ printcpuinfo(void)
 				       "\017MPX"
 				       /* AVX512 Foundation */
 				       "\021AVX512F"
+				       "\022AVX512DQ"
 				       /* Enhanced NRBG */
 				       "\023RDSEED"
 				       /* ADCX + ADOX */
 				       "\024ADX"
 				       /* Supervisor Mode Access Prevention */
 				       "\025SMAP"
+				       "\026AVX512IFMA"
+				       "\027PCOMMIT"
 				       "\030CLFLUSHOPT"
+				       "\031CLWB"
 				       "\032PROCTRACE"
 				       "\033AVX512PF"
 				       "\034AVX512ER"
 				       "\035AVX512CD"
 				       "\036SHA"
+				       "\037AVX512BW"
 				       );
 			}
 
@@ -930,6 +935,7 @@ printcpuinfo(void)
 				    cpu_stdext_feature2,
 				       "\020"
 				       "\001PREFETCHWT1"
+				       "\002AVX512VBMI"
 				       "\004PKU"
 				       "\005OSPKE"
 				       );
@@ -1882,6 +1888,18 @@ print_INTEL_TLB(u_int data)
 		break;
 	case 0x68:
 		printf("1st-level data cache: 32 KB, 4 way set associative, sectored cache, 64 byte line size\n");
+		break;
+	case 0x6a:
+		printf("uTLB: 4KByte pages, 8-way set associative, 64 entries\n");
+		break;
+	case 0x6b:
+		printf("DTLB: 4KByte pages, 8-way set associative, 256 entries\n");
+		break;
+	case 0x6c:
+		printf("DTLB: 2M/4M pages, 8-way set associative, 128 entries\n");
+		break;
+	case 0x6d:
+		printf("DTLB: 1 GByte pages, fully associative, 16 entries\n");
 		break;
 	case 0x70:
 		printf("Trace cache: 12K-uops, 8-way set associative\n");

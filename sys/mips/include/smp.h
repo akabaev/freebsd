@@ -23,7 +23,7 @@
 
 #ifdef MIPS_INTRNG
 # define MIPS_IPI_COUNT	1
-# define ARM_IPI_COUNT	MIPS_IPI_COUNT /* For arm/intrng.c compatibility */
+# define INTR_IPI_COUNT	MIPS_IPI_COUNT
 #endif
 
 /*

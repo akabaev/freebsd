@@ -466,7 +466,7 @@ nexus_setup_intr(device_t dev, device_t child, struct resource *res, int flags,
 
 #ifdef MIPS_INTRNG
 	for (irq = rman_get_start(res); irq <= rman_get_end(res); irq++) {
-		arm_irq_add_handler(child, filt, intr, arg, irq, flags,
+		intr_irq_add_handler(child, filt, intr, arg, irq, flags,
 		    cookiep);
 	}
 #else
@@ -491,7 +491,7 @@ nexus_teardown_intr(device_t dev, device_t child, struct resource *r, void *ih)
 {
 
 #ifdef MIPS_INTRNG
-	return (arm_irq_remove_handler(child, rman_get_start(r), ih));
+	return (intr_irq_remove_handler(child, rman_get_start(r), ih));
 #else
 	printf("Unimplemented %s at %s:%d\n", __func__, __FILE__, __LINE__);
 	return (0);
@@ -506,7 +506,7 @@ nexus_config_intr(device_t dev, int irq, enum intr_trigger trig,
 	int ret = ENODEV;
 
 #ifdef MIPS_INTRNG
-	ret = arm_irq_config(irq, trig, pol);
+	ret = intr_irq_config(irq, trig, pol);
 #endif
 	return (ret);
 }
@@ -516,7 +516,7 @@ nexus_describe_intr(device_t dev, device_t child, struct resource *irq,
     void *cookie, const char *descr)
 {
 
-	return (arm_irq_describe(rman_get_start(irq), cookie, descr));
+	return (intr_irq_describe(rman_get_start(irq), cookie, descr));
 }
 
 #ifdef SMP
@@ -524,7 +524,7 @@ static int
 nexus_bind_intr(device_t dev, device_t child, struct resource *irq, int cpu)
 {
 
-	return (arm_irq_bind(rman_get_start(irq), cpu));
+	return (intr_irq_bind(rman_get_start(irq), cpu));
 }
 #endif
 
@@ -533,7 +533,7 @@ static int
 nexus_ofw_map_intr(device_t dev, device_t child, phandle_t iparent, int icells,
     pcell_t *intr)
 {
-	return (arm_fdt_map_irq(iparent, intr, icells));
+	return (intr_fdt_map_irq(iparent, intr, icells));
 }
 #endif
 #endif /* MIPS_INTRNG */

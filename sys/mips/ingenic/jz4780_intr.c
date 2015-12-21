@@ -66,7 +66,7 @@ struct jz4780_pic_softc {
 	device_t		pic_dev;
 	void *                  pic_intrhand;
 	struct resource *       pic_res[2];
-	struct arm_irqsrc *	pic_irqs[JZ4780_NIRQS];
+	struct intr_irqsrc *	pic_irqs[JZ4780_NIRQS];
 	struct mtx		mutex;
 	uint32_t		nirqs;
 };
@@ -151,7 +151,7 @@ jz4780_pic_attach(device_t dev)
 	 * Now, when everything is initialized, it's right time to
 	 * register interrupt controller to interrupt framefork.
 	 */
-	if (arm_pic_register(dev, xref) != 0) {
+	if (intr_pic_register(dev, xref) != 0) {
 		device_printf(dev, "could not register PIC\n");
 		goto cleanup;
 	}
@@ -159,7 +159,7 @@ jz4780_pic_attach(device_t dev)
 	if (bus_setup_intr(dev, sc->pic_res[1], INTR_TYPE_CLK,
 	    jz4780_pic_intr, NULL, sc, &sc->pic_intrhand)) {
 		device_printf(dev, "could not setup irq handler\n");
-		arm_pic_unregister(dev, xref);
+		intr_pic_unregister(dev, xref);
 		goto cleanup;
 	}
 	return (0);
@@ -173,7 +173,7 @@ static int
 jz4780_pic_intr(void *arg)
 {
 	struct jz4780_pic_softc *sc = arg;
-	struct arm_irqsrc *isrc;
+	struct intr_irqsrc *isrc;
 	struct thread *td;
 	uint32_t i, intr;
 
@@ -192,7 +192,7 @@ jz4780_pic_intr(void *arg)
 			pic_irq_mask(sc, i);
 			continue;
 		}
-		arm_irq_dispatch(isrc, td->td_intr_frame);
+		intr_irq_dispatch(isrc, td->td_intr_frame);
 	}
 
 	KASSERT(i == 0, ("all interrupts handled"));
@@ -209,7 +209,7 @@ jz4780_pic_intr(void *arg)
 			pic_irq_mask(sc, i);
 			continue;
 		}
-		arm_irq_dispatch(isrc, td->td_intr_frame);
+		intr_irq_dispatch(isrc, td->td_intr_frame);
 	}
 
 	KASSERT(i == 0, ("all interrupts handled"));
@@ -219,7 +219,7 @@ jz4780_pic_intr(void *arg)
 }
 
 static int
-pic_attach_isrc(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int irq)
+pic_attach_isrc(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int irq)
 {
 	const char *name;
 
@@ -238,12 +238,12 @@ pic_attach_isrc(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int irq)
 	mtx_unlock_spin(&sc->mutex);
 
 	name = device_get_nameunit(sc->pic_dev);
-	arm_irq_set_name(isrc, "%s,i%u", name, irq);
+	intr_irq_set_name(isrc, "%s,i%u", name, irq);
 	return (0);
 }
 
 static int
-pic_detach_isrc(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int irq)
+pic_detach_isrc(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int irq)
 {
 
 	mtx_lock_spin(&sc->mutex);
@@ -255,12 +255,12 @@ pic_detach_isrc(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int irq)
 	isrc->isrc_data = 0;
 	mtx_unlock_spin(&sc->mutex);
 
-	arm_irq_set_name(isrc, "%s", "");
+	intr_irq_set_name(isrc, "%s", "");
 	return (0);
 }
 
 static int
-pic_map_fdt(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int *irqp)
+pic_map_fdt(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int *irqp)
 {
 	u_int irq;
 	int error;
@@ -273,7 +273,7 @@ pic_map_fdt(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int *irqp)
 	if (error != 0)
 		return (error);
 
-	isrc->isrc_nspc_type = ARM_IRQ_NSPC_PLAIN;
+	isrc->isrc_nspc_type = INTR_IRQ_NSPC_PLAIN;
 	isrc->isrc_nspc_num = irq;
 	isrc->isrc_trig = INTR_TRIGGER_CONFORM;
 	isrc->isrc_pol = INTR_POLARITY_CONFORM;
@@ -283,13 +283,13 @@ pic_map_fdt(struct jz4780_pic_softc *sc, struct arm_irqsrc *isrc, u_int *irqp)
 }
 
 static int
-jz4780_pic_register(device_t dev, struct arm_irqsrc *isrc, boolean_t *is_percpu)
+jz4780_pic_register(device_t dev, struct intr_irqsrc *isrc, boolean_t *is_percpu)
 {
 	struct jz4780_pic_softc *sc = device_get_softc(dev);
 	u_int irq;
 	int error;
 
-	if (isrc->isrc_type == ARM_ISRCT_FDT)
+	if (isrc->isrc_type == INTR_ISRCT_FDT)
 		error = pic_map_fdt(sc, isrc, &irq);
 	else
 		return (EINVAL);
@@ -300,14 +300,14 @@ jz4780_pic_register(device_t dev, struct arm_irqsrc *isrc, boolean_t *is_percpu)
 }
 
 static void
-jz4780_pic_enable_intr(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
 	if (isrc->isrc_trig == INTR_TRIGGER_CONFORM)
 		isrc->isrc_trig = INTR_TRIGGER_LEVEL;
 }
 
 static void
-jz4780_pic_enable_source(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_enable_source(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_pic_softc *sc = device_get_softc(dev);
 
@@ -315,7 +315,7 @@ jz4780_pic_enable_source(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static void
-jz4780_pic_disable_source(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_disable_source(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_pic_softc *sc = device_get_softc(dev);
 
@@ -323,7 +323,7 @@ jz4780_pic_disable_source(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static int
-jz4780_pic_unregister(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_unregister(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_pic_softc *sc = device_get_softc(dev);
 
@@ -331,21 +331,21 @@ jz4780_pic_unregister(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static void
-jz4780_pic_pre_ithread(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
 	jz4780_pic_disable_source(dev, isrc);
 }
 
 static void
-jz4780_pic_post_ithread(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_post_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
 	jz4780_pic_enable_source(dev, isrc);
 }
 
 static void
-jz4780_pic_post_filter(device_t dev, struct arm_irqsrc *isrc)
+jz4780_pic_post_filter(device_t dev, struct intr_irqsrc *isrc)
 {
 }
 

@@ -21,8 +21,8 @@ mips/ingenic/jz4780_gpio_if.m	standard
 #
 # Hack to reuse ARM intrng code
 #
-arm/arm/intrng.c		standard
-arm/arm/pic_if.m		standard
+kern/subr_intr.c		standard
+kern/pic_if.m			standard
 
 # Intrng compatible MIPS32 interrupt controller
 mips/ingenic/mips_pic.c		standard

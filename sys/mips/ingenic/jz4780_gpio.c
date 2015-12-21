@@ -75,7 +75,7 @@ struct jz4780_gpio_pin {
 	enum intr_trigger intr_trigger;
 	enum intr_polarity intr_polarity;
 	char pin_name[GPIOMAXNAME];
-	struct arm_irqsrc *pin_irqsrc;
+	struct intr_irqsrc *pin_irqsrc;
 };
 
 struct jz4780_gpio_softc {
@@ -318,7 +318,7 @@ jz4780_gpio_attach(device_t dev)
 		jz4780_gpio_pin_probe(sc, i);
 	}
 
-	if (arm_pic_register(dev, OF_xref_from_node(node)) != 0) {
+	if (intr_pic_register(dev, OF_xref_from_node(node)) != 0) {
 		device_printf(dev, "could not register PIC\n");
 		goto fail;
 	}
@@ -333,7 +333,7 @@ jz4780_gpio_attach(device_t dev)
 
 	return (0);
 fail_pic:
-	arm_pic_unregister(dev, OF_xref_from_node(node));
+	intr_pic_unregister(dev, OF_xref_from_node(node));
 fail:
 	if (sc->intrhand != NULL)
 		bus_teardown_intr(dev, sc->res[1], sc->intrhand);
@@ -526,7 +526,7 @@ jz4780_gpio_pin_toggle(device_t dev, uint32_t pin)
 }
 
 static int
-jz4780_gpio_pic_register(device_t dev, struct arm_irqsrc *isrc, boolean_t *is_percpu)
+jz4780_gpio_pic_register(device_t dev, struct intr_irqsrc *isrc, boolean_t *is_percpu)
 {
 	struct jz4780_gpio_softc *sc;
 	uint32_t pin, tripol;
@@ -568,7 +568,7 @@ jz4780_gpio_pic_register(device_t dev, struct arm_irqsrc *isrc, boolean_t *is_pe
 		    tripol);
 		return (ENOTSUP);
 	}
-	isrc->isrc_nspc_type = ARM_IRQ_NSPC_PLAIN;
+	isrc->isrc_nspc_type = INTR_IRQ_NSPC_PLAIN;
 	isrc->isrc_nspc_num = pin;
 
 	/*
@@ -585,12 +585,12 @@ jz4780_gpio_pic_register(device_t dev, struct arm_irqsrc *isrc, boolean_t *is_pe
 	isrc->isrc_data = pin;
 	JZ4780_GPIO_UNLOCK(sc);
 
-	arm_irq_set_name(isrc, "%s,%u", device_get_nameunit(sc->dev), pin);
+	intr_irq_set_name(isrc, "%s,%u", device_get_nameunit(sc->dev), pin);
 	return (0);
 }
 
 static int
-jz4780_gpio_pic_unregister(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_unregister(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
 	u_int irq;
@@ -607,12 +607,12 @@ jz4780_gpio_pic_unregister(device_t dev, struct arm_irqsrc *isrc)
 	isrc->isrc_data = 0;
 	JZ4780_GPIO_UNLOCK(sc);
 
-	arm_irq_set_name(isrc, "%s", "");
+	intr_irq_set_name(isrc, "%s", "");
 	return (0);
 }
 
 static void
-jz4780_gpio_pic_enable_intr(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
 	uint32_t pin, mask;
@@ -646,7 +646,7 @@ jz4780_gpio_pic_enable_intr(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static void
-jz4780_gpio_pic_enable_source(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_enable_source(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
 
@@ -655,7 +655,7 @@ jz4780_gpio_pic_enable_source(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static void
-jz4780_gpio_pic_disable_source(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_disable_source(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
 
@@ -664,21 +664,21 @@ jz4780_gpio_pic_disable_source(device_t dev, struct arm_irqsrc *isrc)
 }
 
 static void
-jz4780_gpio_pic_pre_ithread(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
 	jz4780_gpio_pic_disable_source(dev, isrc);
 }
 
 static void
-jz4780_gpio_pic_post_ithread(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_post_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
 	jz4780_gpio_pic_enable_source(dev, isrc);
 }
 
 static void
-jz4780_gpio_pic_post_filter(device_t dev, struct arm_irqsrc *isrc)
+jz4780_gpio_pic_post_filter(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
 
@@ -699,7 +699,7 @@ jz4780_gpio_intr(void *arg)
 		if ((interrupts & 0x1) == 0)
 			continue;
 		if (sc->pins[i].pin_irqsrc)
-			arm_irq_dispatch(sc->pins[i].pin_irqsrc, curthread->td_intr_frame);
+			intr_irq_dispatch(sc->pins[i].pin_irqsrc, curthread->td_intr_frame);
 		else
 			device_printf(sc->dev, "spurious interrupt %d\n", i);
 	}
