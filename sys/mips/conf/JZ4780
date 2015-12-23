@@ -23,7 +23,6 @@ options		CLK_FRAMEWORK		# Clk framework from tegra
 options 	DDB
 options 	KDB
 options		BREAK_TO_DEBUGGER
-#options		DEBUG_REDZONE
 
 options 	SCHED_4BSD		#4BSD scheduler
 options 	INET			#InterNETworking
@@ -70,6 +69,8 @@ device		gpio
 
 device 		scbus
 device 		da
+
+#device		mmc
 
 # USB support
 options 	USB_DEBUG	# enable debug msgs

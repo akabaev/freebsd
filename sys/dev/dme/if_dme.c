@@ -671,7 +671,7 @@ dme_attach(device_t dev)
 	/*
 	 * Delay a little.  This seems required on rev-1 boards (green.)
 	 */
-	DELAY(1000);
+	DELAY(100000);
 
 	/* Bring controller out of reset */
 	error = ofw_gpiobus_parse_gpios(dev, "reset-gpios", &sc->gpio_rset);
@@ -708,7 +708,8 @@ dme_attach(device_t dev)
 		}
 
 		DELAY(4000);
-	}
+	} else
+		device_printf(dev, "Unable to find reset GPIO\n");
 
 	sc->dme_tag = rman_get_bustag(sc->dme_res);
 	sc->dme_handle = rman_get_bushandle(sc->dme_res);
@@ -737,6 +738,8 @@ dme_attach(device_t dev)
 		goto fail;
 	}
 
+	DELAY(100000);
+
 	/* Read vendor and device id's */
 	data = dme_read_reg(sc, DME_VIDH) << 8;
 	data |= dme_read_reg(sc, DME_VIDL);
@@ -753,6 +756,9 @@ dme_attach(device_t dev)
 	if (data != DME_CHIP_DM9000A && data != DME_CHIP_DM9000B)
 		data = DME_CHIP_DM9000;
 	sc->dme_rev = data;
+
+	device_printf(dev, "using %d-bit IO mode\n", sc->dme_bits);
+	KASSERT(sc->dme_bits == 8, ("wrong io mode"));
 
 	/* Try to figure our mac address */
 	dme_get_macaddr(sc);
@@ -866,10 +872,13 @@ dme_miibus_readreg(device_t dev, int phy, int reg)
 	/* Clear the comand */
 	dme_write_reg(sc, DME_EPCR, 0);
 
-	if (i == DME_TIMEOUT)
+	if (i == DME_TIMEOUT) {
+		printf("Read phy %d reg 0x%08x timeout\n", phy, reg);
 		return 0;
+	}
 
 	rval = (dme_read_reg(sc, DME_EPDRH) << 8) | dme_read_reg(sc, DME_EPDRL);
+	printf("Read phy %d reg 0x%08x = 0x%08x\n",  phy, reg, rval);
 	return (rval);
 }
 
