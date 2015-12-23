@@ -90,7 +90,7 @@ jz4780_nemc_probe(device_t dev)
 	if (!ofw_bus_is_compatible(dev, "ingenic,jz4780-nemc"))
 		return (ENXIO);
 
-	device_set_desc(dev, "Ingenic jz4780 NEMC");
+	device_set_desc(dev, "Ingenic JZ4780 NEMC");
 
 	return (BUS_PROBE_DEFAULT);
 }

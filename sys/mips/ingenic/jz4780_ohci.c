@@ -81,7 +81,7 @@ jz4780_ohci_probe(device_t dev)
 	if (!ofw_bus_is_compatible(dev, "ingenic,jz4780-ohci"))
 		return (ENXIO);
 
-	device_set_desc(dev, "Ingenic jz4780 OHCI");
+	device_set_desc(dev, "Ingenic JZ4780 OHCI");
 
 	return (BUS_PROBE_DEFAULT);
 }

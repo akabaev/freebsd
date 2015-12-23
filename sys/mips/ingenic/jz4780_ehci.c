@@ -64,7 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <mips/ingenic/jz4780_clock.h>
 #include <mips/ingenic/jz4780_regs.h>
 
-#define EHCI_HC_DEVSTR		"Ingenic jz4780 EHCI"
+#define EHCI_HC_DEVSTR		"Ingenic JZ4780 EHCI"
 
 struct jz4780_ehci_softc {
 	ehci_softc_t		base;	/* storage for EHCI code */
