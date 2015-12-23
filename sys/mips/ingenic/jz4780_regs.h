@@ -601,8 +601,8 @@ readreg(uint32_t reg)
 	#define JZ_IO_ABORT	0x00000800
 	#define JZ_BUS_WIDTH_M	0x00000600
 	#define JZ_BUS_1BIT	0x00000000
-	#define JZ_BUS_4BIT	0x00000200
-	#define JZ_BUS_8BIT	0x00000300
+	#define JZ_BUS_4BIT	0x00000400
+	#define JZ_BUS_8BIT	0x00000600
 	#define JZ_INIT		0x00000080 /* send 80 clk init before cmd */
 	#define JZ_BUSY		0x00000040
 	#define JZ_STREAM	0x00000020
@@ -618,7 +618,7 @@ readreg(uint32_t reg)
 	#define JZ_RES_R6	0x00000006
 	#define JZ_RES_R7	0x00000007
 #define JZ_MSC_RESTO	0x10 /* 16bit response timeout in MSC_CLK */
-#define JZ_MSC_RDTO RW	0x14 /* 32bit read timeout in MSC_CLK */
+#define JZ_MSC_RDTO 	0x14 /* 32bit read timeout in MSC_CLK */
 #define JZ_MSC_BLKLEN	0x18 /* 16bit block length */
 #define JZ_MSC_NOB	0x1c /* 16bit block counter */
 #define JZ_MSC_SNOB	0x20 /* 16bit successful block counter */
@@ -642,7 +642,7 @@ readreg(uint32_t reg)
 	#define JZ_INT_SDIO		0x00000080
 	#define JZ_INT_TXFIFO_WR_REQ	0x00000040
 	#define JZ_INT_RXFIFO_RD_REQ	0x00000020
-	#define JZ_INT_EMD_CMD_RES	0x00000004
+	#define JZ_INT_END_CMD_RES	0x00000004
 	#define JZ_INT_PRG_DONE		0x00000002
 	#define JZ_INT_DATA_TRAN_DONE	0x00000001
 #define JZ_MSC_IFLG	0x28 /* interrupt flags */
@@ -661,6 +661,7 @@ readreg(uint32_t reg)
 #define JZ_MSC_DMAC	0x44
 	#define JZ_MODE_SEL	0x80 /* 1 - specify transfer length */
 	#define JZ_AOFST_M	0x60 /* address offset in bytes */
+	#define JZ_AOFST_S	6    /* addrress offset shift */
 	#define JZ_ALIGNEN	0x10 /* allow non-32bit-aligned transfers */
 	#define JZ_INCR_M	0x0c /* burst type */
 	#define JZ_INCR_16	0x00

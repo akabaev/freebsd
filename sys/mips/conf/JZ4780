@@ -73,7 +73,8 @@ device		gpio
 device 		scbus
 device 		da
 
-#device		mmc
+device		mmc
+device		mmcsd
 
 # USB support
 options 	USB_DEBUG	# enable debug msgs
