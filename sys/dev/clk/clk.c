@@ -1203,7 +1203,6 @@ clk_get_by_ofw_index(device_t cdev, int idx, clk_t *clk)
 	rv = clkdom->ofw_mapper(clkdom, ncells, cells, &clknode);
 	if (rv == 0) {
 		*clk = clk_create(clknode, cdev);
-printf("%s:,  got clock %s(id: %d)\n", __func__, clknode->name, clknode->id);
 	}
 	CLK_TOPO_UNLOCK();
 
