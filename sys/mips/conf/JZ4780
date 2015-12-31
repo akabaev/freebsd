@@ -74,7 +74,7 @@ device 		da
 
 # USB support
 options 	USB_DEBUG	# enable debug msgs
-options 	USB_HOST_ALIGN=32
+options 	USB_HOST_ALIGN=128 # L2 cache line size
 device		ohci		# OHCI PCI->USB interface
 device		ehci		# EHCI PCI->USB interface (USB 2.0)
 device		dwcotg		# DesignWare HS OTG controller
