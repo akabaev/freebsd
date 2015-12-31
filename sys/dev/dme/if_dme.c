@@ -124,6 +124,8 @@ dme_read_reg(struct dme_softc *sc, uint8_t reg)
 
 	/* Send the register to read from */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, CMD_ADDR, 1,
+	    BUS_SPACE_BARRIER_WRITE);
 
 	/* Get the value of the register */
 	return bus_space_read_1(sc->dme_tag, sc->dme_handle, DATA_ADDR);
@@ -135,9 +137,13 @@ dme_write_reg(struct dme_softc *sc, uint8_t reg, uint8_t value)
 
 	/* Send the register to write to */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, reg);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, CMD_ADDR, 1,
+	    BUS_SPACE_BARRIER_WRITE);
 
 	/* Write the value to the register */
 	bus_space_write_1(sc->dme_tag, sc->dme_handle, DATA_ADDR, value);
+	bus_space_barrier(sc->dme_tag, sc->dme_handle, DATA_ADDR, 1,
+	    BUS_SPACE_BARRIER_WRITE);
 }
 
 static void
@@ -872,13 +878,10 @@ dme_miibus_readreg(device_t dev, int phy, int reg)
 	/* Clear the comand */
 	dme_write_reg(sc, DME_EPCR, 0);
 
-	if (i == DME_TIMEOUT) {
-		printf("Read phy %d reg 0x%08x timeout\n", phy, reg);
-		return 0;
-	}
+	if (i == DME_TIMEOUT)
+		return (0);
 
 	rval = (dme_read_reg(sc, DME_EPDRH) << 8) | dme_read_reg(sc, DME_EPDRL);
-	printf("Read phy %d reg 0x%08x = 0x%08x\n",  phy, reg, rval);
 	return (rval);
 }
 
