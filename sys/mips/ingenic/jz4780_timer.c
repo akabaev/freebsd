@@ -167,13 +167,13 @@ jz4780_timer_attach(device_t dev)
 		uint64_t clk_freq;
 
 		if (clk_get_freq(clk, &clk_freq) == 0)
-			counter_freq = (uint32_t)clk_freq / 4;
+			counter_freq = (uint32_t)clk_freq / 16;
 		clk_release(clk);
 	}
 	if (counter_freq == 0) {
 		device_printf(dev, "unable to determine ext clock frequency\n");
 		/* Hardcode value we 'know' is correct */
-		counter_freq = 48000000 / 4;
+		counter_freq = 48000000 / 16;
 	}
 
 	/*
@@ -198,13 +198,13 @@ jz4780_timer_attach(device_t dev)
 	CSR_WRITE_4(sc, JZ_OST_DATA, 0xffffffff);
 
 	/* Configure counter for external clock */
-	CSR_WRITE_4(sc, JZ_OST_CTRL, OSTC_EXT_EN | OSTC_MODE | OSTC_DIV_4);
+	CSR_WRITE_4(sc, JZ_OST_CTRL, OSTC_EXT_EN | OSTC_MODE | OSTC_DIV_16);
 
 	/* Start the counter again */
 	CSR_WRITE_4(sc, JZ_TC_TESR, TESR_OST);
 
 	/* Configure TCU channel 5 similarly to OST and leave it disabled */
-	CSR_WRITE_4(sc, JZ_TC_TCSR(5), TCSR_EXT_EN | TCSR_DIV_4);
+	CSR_WRITE_4(sc, JZ_TC_TCSR(5), TCSR_EXT_EN | TCSR_DIV_16);
 	CSR_WRITE_4(sc, JZ_TC_TMCR, TMR_FMASK(5));
 
 	if (bus_setup_intr(dev, sc->res[2], INTR_TYPE_CLK,
