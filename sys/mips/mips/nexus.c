@@ -63,6 +63,7 @@ __FBSDID("$FreeBSD$");
 #else
 #include <machine/intr_machdep.h>
 #endif
+
 #include "opt_platform.h"
 
 #ifdef FDT
@@ -91,22 +92,22 @@ static struct rman irq_rman;
 static struct rman mem_rman;
 
 static struct resource *
-		nexus_alloc_resource(device_t, device_t, int, int *, u_long,
-		    u_long, u_long, u_int);
+		nexus_alloc_resource(device_t, device_t, int, int *, rman_res_t,
+		    rman_res_t, rman_res_t, u_int);
 static device_t	nexus_add_child(device_t, u_int, const char *, int);
 static int	nexus_attach(device_t);
 static void	nexus_delete_resource(device_t, device_t, int, int);
 static struct resource_list *
 		nexus_get_reslist(device_t, device_t);
-static int	nexus_get_resource(device_t, device_t, int, int, u_long *,
-		    u_long *);
+static int	nexus_get_resource(device_t, device_t, int, int, rman_res_t *,
+		    rman_res_t *);
 static int	nexus_print_child(device_t, device_t);
 static int	nexus_print_all_resources(device_t dev);
 static int	nexus_probe(device_t);
 static int	nexus_release_resource(device_t, device_t, int, int,
 		    struct resource *);
-static int	nexus_set_resource(device_t, device_t, int, int, u_long,
-		    u_long);
+static int	nexus_set_resource(device_t, device_t, int, int, rman_res_t,
+		    rman_res_t);
 static int	nexus_activate_resource(device_t, device_t, int, int,
 		    struct resource *);
 static int	nexus_deactivate_resource(device_t, device_t, int, int,
@@ -119,13 +120,13 @@ static int	nexus_teardown_intr(device_t, device_t, struct resource *,
 		    void *);
 #ifdef MIPS_INTRNG
 #ifdef SMP
-static	int	nexus_bind_intr(device_t, device_t, struct resource *, int);
+static int	nexus_bind_intr(device_t, device_t, struct resource *, int);
 #endif
-#ifdef	FDT
-static int	nexus_ofw_map_intr(device_t dev, device_t child, phandle_t iparent,
-		    int icells, pcell_t *intr);
+#ifdef FDT
+static int	nexus_ofw_map_intr(device_t dev, device_t child,
+		    phandle_t iparent, int icells, pcell_t *intr);
 #endif
-static	int	nexus_describe_intr(device_t dev, device_t child,
+static int	nexus_describe_intr(device_t dev, device_t child,
 		    struct resource *irq, void *cookie, const char *descr);
 static int	nexus_config_intr(device_t dev, int irq, enum intr_trigger trig,
 		    enum intr_polarity pol);
@@ -160,6 +161,7 @@ static device_method_t nexus_methods[] = {
 	DEVMETHOD(ofw_bus_map_intr,	nexus_ofw_map_intr),
 #endif
 #endif
+
 	{ 0, 0 }
 };
 
@@ -268,7 +270,7 @@ nexus_add_child(device_t bus, u_int order, const char *name, int unit)
  */
 static struct resource *
 nexus_alloc_resource(device_t bus, device_t child, int type, int *rid,
-	u_long start, u_long end, u_long count, u_int flags)
+	rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	struct nexus_device		*ndev = DEVTONX(child);
 	struct resource			*rv;
@@ -345,7 +347,7 @@ nexus_get_reslist(device_t dev, device_t child)
 
 static int
 nexus_set_resource(device_t dev, device_t child, int type, int rid,
-    u_long start, u_long count)
+    rman_res_t start, rman_res_t count)
 {
 	struct nexus_device		*ndev = DEVTONX(child);
 	struct resource_list		*rl = &ndev->nx_resources;
@@ -364,7 +366,7 @@ nexus_set_resource(device_t dev, device_t child, int type, int rid,
 
 static int
 nexus_get_resource(device_t dev, device_t child, int type, int rid,
-    u_long *startp, u_long *countp)
+    rman_res_t *startp, rman_res_t *countp)
 {
 	struct nexus_device		*ndev = DEVTONX(child);
 	struct resource_list		*rl = &ndev->nx_resources;
@@ -421,11 +423,7 @@ nexus_activate_resource(device_t bus, device_t child, int type, int rid,
 	if (type == SYS_RES_MEMORY || type == SYS_RES_IOPORT) {
 		paddr = rman_get_start(r);
 		psize = rman_get_size(r);
-#ifdef FDT
-		rman_set_bustag(r, fdtbus_bs_tag);
-#else
 		rman_set_bustag(r, mips_bus_space_generic);
-#endif
 		err = bus_space_map(rman_get_bustag(r), paddr, psize, 0,
 		    (bus_space_handle_t *)&vaddr);
 		if (err != 0) {
@@ -503,12 +501,8 @@ static int
 nexus_config_intr(device_t dev, int irq, enum intr_trigger trig,
     enum intr_polarity pol)
 {
-	int ret = ENODEV;
 
-#ifdef MIPS_INTRNG
-	ret = intr_irq_config(irq, trig, pol);
-#endif
-	return (ret);
+	return (intr_irq_config(irq, trig, pol));
 }
 
 static int
@@ -533,6 +527,7 @@ static int
 nexus_ofw_map_intr(device_t dev, device_t child, phandle_t iparent, int icells,
     pcell_t *intr)
 {
+
 	return (intr_fdt_map_irq(iparent, intr, icells));
 }
 #endif
