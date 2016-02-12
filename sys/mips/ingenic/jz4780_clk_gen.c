@@ -50,7 +50,7 @@ static int jz4780_clk_gen_init(struct clknode *clk, device_t dev);
 static int jz4780_clk_gen_recalc_freq(struct clknode *clk, uint64_t *freq);
 static int jz4780_clk_gen_set_freq(struct clknode *clk, uint64_t fin,
     uint64_t *fout, int flags, int *stop);
-static int jz4780_clk_gen_set_gate(struct clknode *clk, int enable);
+static int jz4780_clk_gen_set_gate(struct clknode *clk, bool enable);
 static int jz4780_clk_gen_set_mux(struct clknode *clk, int src);
 
 struct jz4780_clk_gen_sc {
@@ -185,7 +185,7 @@ jz4780_clk_gen_set_freq(struct clknode *clk, uint64_t fin,
 	divider = (div_reg << sc->clk_descr->clk_div.div_lg);
 	div_reg--;
 
-	if ((flags & CLK_SET_TEST_RUN) != 0) {
+	if ((flags & CLK_SET_DRYRUN) != 0) {
 		if (*stop != 0 && *fout != fin / divider &&
 		    (flags & (CLK_SET_ROUND_UP | CLK_SET_ROUND_DOWN)) == 0)
 			return (ERANGE);
@@ -253,7 +253,7 @@ jz4780_clk_gen_set_mux(struct clknode *clk, int src)
 }
 
 static int
-jz4780_clk_gen_set_gate(struct clknode *clk, int enable)
+jz4780_clk_gen_set_gate(struct clknode *clk, bool enable)
 {
 	struct jz4780_clk_gen_sc *sc;
 	uint32_t off, reg, bit;
@@ -297,11 +297,11 @@ int jz4780_clk_gen_register(struct clkdom *clkdom,
 	clkdef.name = __DECONST(char *, descr->clk_name);
 	/* Silly const games to work around API deficiency */
 	clkdef.parent_names = (const char **)(uintptr_t)&descr->clk_pnames[0];
-	clkdef.flags = CLK_FLAGS_STATIC;
+	clkdef.flags = CLK_NODE_STATIC_STRINGS;
 	if (descr->clk_type & CLK_MASK_MUX)
-		clkdef.parents_num = __bitcount16(descr->clk_mux.mux_map);
+		clkdef.parent_cnt = __bitcount16(descr->clk_mux.mux_map);
 	else
-		clkdef.parents_num = 1;
+		clkdef.parent_cnt = 1;
 
 	clk = clknode_create(clkdom, &jz4780_clk_gen_class, &clkdef);
 	if (clk == NULL)

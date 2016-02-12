@@ -65,6 +65,9 @@ device		fdt_pinctrl
 device		fdt_regulator
 device		fdt_regulator_fixed
 
+device		clk
+device		ext_resources
+
 device		gpio
 
 device 		scbus

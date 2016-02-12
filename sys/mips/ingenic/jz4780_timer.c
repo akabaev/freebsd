@@ -43,7 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/cpu.h>
 #include <machine/hwfunc.h>
 
-#include <dev/clk/clk.h>
+#include <dev/extres/clk/clk.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>

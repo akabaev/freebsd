@@ -133,7 +133,7 @@ jz4780_clk_otg_set_freq(struct clknode *clk, uint64_t fin,
 	*fout = otg_div_table[i].freq;
 
 	*stop = 1;
-	if (flags & CLK_SET_TEST_RUN)
+	if (flags & CLK_SET_DRYRUN)
 		return (0);
 
 	CLK_LOCK(sc);

@@ -38,7 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/gpio.h>
 
-#include <dev/clk/clk.h>
+#include <dev/extres/clk/clk.h>
 
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>

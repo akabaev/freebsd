@@ -33,7 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/module.h>
 
-#include <dev/clk/clk_fixed.h>
+#include <dev/extres/clk/clk_fixed.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>
@@ -89,8 +89,8 @@ fixed_clock_attach(device_t dev)
 	cdef.clkdef.id = 1;
 	cdef.clkdef.name = __DECONST(char *, ofw_bus_get_name(dev));
 	cdef.clkdef.parent_names = NULL;
-	cdef.clkdef.parents_num = 0;
-	cdef.clkdef.flags = CLK_FLAGS_STATIC;
+	cdef.clkdef.parent_cnt = 0;
+	cdef.clkdef.flags = CLK_NODE_STATIC_STRINGS;
 	cdef.freq = freq;
 	cdef.mult = 1;
 	cdef.div = 1;

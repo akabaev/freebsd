@@ -31,5 +31,5 @@ kern/subr_intr.c		standard
 kern/pic_if.m			standard
 
 # Intrng compatible MIPS32 interrupt controller
-mips/ingenic/mips_pic.c		standard
+mips/mips/mips_pic.c		standard
 

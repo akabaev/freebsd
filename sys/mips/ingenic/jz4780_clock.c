@@ -53,6 +53,8 @@ __FBSDID("$FreeBSD$");
 #include <mips/ingenic/jz4780_regs.h>
 #include <mips/ingenic/jz4780_clock.h>
 
+#include "clkdev_if.h"
+
 #include <gnu/dts/include/dt-bindings/clock/jz4780-cgu.h>
 
 /**********************************************************************
@@ -391,8 +393,8 @@ jz4780_clock_register(struct jz4780_clock_softc *sc)
 		clkdef.id = pll_clks[i].clk_id;
 		clkdef.name = __DECONST(char *, pll_clks[i].clk_name);
 		clkdef.parent_names = pll_clks[i].clk_pname;
-		clkdef.parents_num = 1;
-		clkdef.flags = CLK_FLAGS_STATIC;
+		clkdef.parent_cnt = 1;
+		clkdef.flags = CLK_NODE_STATIC_STRINGS;
 
 		ret = jz4780_clk_pll_register(sc->clkdom, &clkdef, &sc->mtx,
 		    sc->res[0], pll_clks[i].clk_reg);
@@ -407,8 +409,8 @@ jz4780_clock_register(struct jz4780_clock_softc *sc)
 		clkdef.id = otg_clks[i].clk_id;
 		clkdef.name = __DECONST(char *, otg_clks[i].clk_name);
 		clkdef.parent_names = otg_clks[i].clk_pname;
-		clkdef.parents_num = 1;
-		clkdef.flags = CLK_FLAGS_STATIC;
+		clkdef.parent_cnt = 1;
+		clkdef.flags = CLK_NODE_STATIC_STRINGS;
 
 		ret = jz4780_clk_otg_register(sc->clkdom, &clkdef, &sc->mtx,
 		    sc->res[0]);
@@ -431,8 +433,8 @@ jz4780_clock_register(struct jz4780_clock_softc *sc)
 		gatedef.clkdef.id = gate_clks[i].clk_id;
 		gatedef.clkdef.name = __DECONST(char *, gate_clks[i].clk_name);
 		gatedef.clkdef.parent_names = gate_clks[i].clk_pname;
-		gatedef.clkdef.parents_num = 1;
-		gatedef.clkdef.flags = CLK_FLAGS_STATIC;
+		gatedef.clkdef.parent_cnt = 1;
+		gatedef.clkdef.flags = CLK_NODE_STATIC_STRINGS;
 
 		if (gate_clks[i].clk_bit < 32) {
 			gatedef.offset = JZ_CLKGR0;
@@ -446,8 +448,7 @@ jz4780_clock_register(struct jz4780_clock_softc *sc)
 		gatedef.off_value = 1;
 		gatedef.gate_flags = 0;
 
-		ret = clknode_gate_register(sc->clkdom, &gatedef, &sc->mtx,
-		    sc->res[0]);
+		ret = clknode_gate_register(sc->clkdom, &gatedef);
 		if (ret != 0)
 			return (ret);
 
@@ -516,8 +517,9 @@ jz4780_clock_probe(device_t dev)
 static int
 jz4780_clock_attach(device_t dev)
 {
-	struct jz4780_clock_softc *sc = device_get_softc(dev);
+	struct jz4780_clock_softc *sc;
 
+	sc = device_get_softc(dev);
 	if (bus_alloc_resources(dev, jz4780_clock_spec, sc->res)) {
 		device_printf(dev, "could not allocate resources for device\n");
 		return (ENXIO);
@@ -549,11 +551,53 @@ fail:
 static int
 jz4780_clock_detach(device_t dev)
 {
-	struct jz4780_clock_softc *sc = device_get_softc(dev);
+	struct jz4780_clock_softc *sc;
 
+	sc = device_get_softc(dev);
 	bus_release_resources(dev, jz4780_clock_spec, sc->res);
 	CGU_LOCK_DESTROY(sc);
 
+	return (0);
+}
+
+static int
+jz4780_clock_write_4(device_t dev, bus_addr_t addr, uint32_t val)
+{
+	struct jz4780_clock_softc *sc;
+
+	sc = device_get_softc(dev);
+	CGU_LOCK(sc);
+	CSR_WRITE_4(sc, addr, val);
+	CGU_UNLOCK(sc);
+	return (0);
+}
+
+static int
+jz4780_clock_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
+{
+	struct jz4780_clock_softc *sc;
+
+	sc = device_get_softc(dev);
+	CGU_LOCK(sc);
+	*val = CSR_READ_4(sc, addr);
+	CGU_UNLOCK(sc);
+	return (0);
+}
+
+static int
+jz4780_clock_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
+    uint32_t set_mask)
+{
+	struct jz4780_clock_softc *sc;
+	uint32_t val;
+
+	sc = device_get_softc(dev);
+	CGU_LOCK(sc);
+	val = CSR_READ_4(sc, addr);
+	val &= clear_mask;
+	val |= set_mask;
+	CSR_WRITE_4(sc, addr, val);
+	CGU_UNLOCK(sc);
 	return (0);
 }
 
@@ -562,6 +606,11 @@ static device_method_t jz4780_clock_methods[] = {
 	DEVMETHOD(device_probe,		jz4780_clock_probe),
 	DEVMETHOD(device_attach,	jz4780_clock_attach),
 	DEVMETHOD(device_detach,	jz4780_clock_detach),
+
+	/* Clock device interface */
+	DEVMETHOD(clkdev_write_4,	jz4780_clock_write_4),
+	DEVMETHOD(clkdev_read_4,	jz4780_clock_read_4),
+	DEVMETHOD(clkdev_modify_4,	jz4780_clock_modify_4),
 
 	DEVMETHOD_END
 };

@@ -29,8 +29,8 @@
 #ifndef	_MIPS_INGENIC_JZ4780_CLK_H
 #define	_MIPS_INGENIC_JZ4780_CLK_H
 
-#include <dev/clk/clk.h>
-#include <dev/clk/clk_gate.h>
+#include <dev/extres/clk/clk.h>
+#include <dev/extres/clk/clk_gate.h>
 
 /* Convenience bitfiled manipulation macros */
 #define REG_MSK(field)			(((1u << field ## _WIDTH) - 1) << field ##_SHIFT)

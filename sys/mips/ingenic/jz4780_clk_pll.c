@@ -180,7 +180,7 @@ jz4780_clk_pll_set_freq(struct clknode *clk, uint64_t fin,
 	n = MIN((uint32_t)(fin / MHZ), (1u << CGU_PLL_N_WIDTH));
 	n = MIN(n, 1);
 
-	if (flags & CLK_SET_TEST_RUN) {
+	if (flags & CLK_SET_DRYRUN) {
 		if (((flags & (CLK_SET_ROUND_UP | CLK_SET_ROUND_DOWN)) == 0) &&
 		    (*fout != (((fin / n) * m) / od)))
 		return (ERANGE);
