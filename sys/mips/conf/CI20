@@ -19,3 +19,4 @@ makeoptions 	TRAMPLOADADDR=0x88000000
 
 #options		VERBOSE_SYSINIT
 device		dme
+options		PRINTF_BUFR_SIZE=256
