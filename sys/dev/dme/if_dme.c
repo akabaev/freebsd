@@ -95,6 +95,9 @@ struct dme_softc {
 	uint32_t		dme_ticks;
 	uint8_t			dme_macaddr[ETHER_ADDR_LEN];
 	regulator_t		dme_vcc_regulator;
+	uint8_t			dme_txbusy: 1;
+	uint8_t			dme_txready: 1;
+	uint16_t		dme_txlen;
 };
 
 #define DME_CHIP_DM9000		0x00
@@ -110,6 +113,9 @@ static int dme_detach(device_t);
 static void dme_intr(void *arg);
 static void dme_init_locked(struct dme_softc *);
 
+static void dme_prepare(struct dme_softc *);
+static void dme_transmit(struct dme_softc *);
+
 static int dme_miibus_writereg(device_t dev, int phy, int reg, int data);
 static int dme_miibus_readreg(device_t dev, int phy, int reg);
 
@@ -118,6 +124,17 @@ static int dme_miibus_readreg(device_t dev, int phy, int reg);
 #define CMD_ADDR	BASE_ADDR
 #define	DATA_BIT	1
 #define	DATA_ADDR	0x002
+
+#undef DME_TRACE
+
+#ifdef DME_TRACE
+#define DTR3	TR3
+#define DTR4	TR4
+#else
+#define NOTR(args...) (void)0
+#define DTR3	NOTR
+#define DTR4	NOTR
+#endif
 
 static uint8_t
 dme_read_reg(struct dme_softc *sc, uint8_t reg)
@@ -166,6 +183,14 @@ dme_reset(struct dme_softc *sc)
 	ncr = dme_read_reg(sc, DME_NCR);
 	if (ncr & NCR_RST)
 		device_printf(sc->dme_dev, "device did not complete second reset\n");
+
+	/* Reset trasmit state */
+	sc->dme_txbusy = 0;
+	sc->dme_txready = 0;
+
+	DTR3("dme_reset, flags %#x busy %d ready %d",
+	    sc->dme_ifp ? sc->dme_ifp->if_drv_flags : 0,
+	    sc->dme_txbusy, sc->dme_txready);
 }
 
 /*
@@ -286,7 +311,89 @@ dme_config(struct dme_softc *sc)
 	dme_write_reg(sc, DME_RCR, RCR_DIS_LONG | RCR_DIS_CRC | RCR_RXEN);
 
 	/* Enable interrupts we care about */
-	dme_write_reg(sc, DME_IMR, IMR_PAR | IMR_PRI/* | IMR_LNKCHGI*/);
+	dme_write_reg(sc, DME_IMR, IMR_PAR | IMR_PRI | IMR_PTI);
+}
+
+void
+dme_prepare(struct dme_softc *sc)
+{
+	struct ifnet *ifp;
+	struct mbuf *m, *mp;
+	uint16_t total_len, len;
+
+	DME_ASSERT_LOCKED(sc);
+
+	KASSERT(sc->dme_txready == 0,
+	    ("dme_prepare: called with txready set\n"));
+
+	ifp = sc->dme_ifp;
+	IFQ_DEQUEUE(&ifp->if_snd, m);
+	if (m == NULL) {
+		ifp->if_drv_flags &= ~IFF_DRV_OACTIVE;
+		DTR3("dme_prepare none, flags %#x busy %d ready %d",
+		    sc->dme_ifp->if_drv_flags, sc->dme_txbusy, sc->dme_txready);
+		return; /* Nothing to transmit */
+	}
+
+	/* Element has now been removed from the queue, so we better send it */
+	BPF_MTAP(ifp, m);
+
+	/* Setup the controller to accept the writes */
+	bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR, DME_MWCMD);
+
+	/*
+	 * TODO: Fix the case where an mbuf is
+	 * not a multiple of the write size.
+	 */
+	total_len = 0;
+	for (mp = m; mp != NULL; mp = mp->m_next) {
+		len = mp->m_len;
+
+		/* Ignore empty parts */
+		if (len == 0)
+			continue;
+
+		total_len += len;
+
+#if 0
+		bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
+		    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
+#else
+		bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
+		    DATA_ADDR, mtod(mp, uint8_t *), len);
+#endif
+	}
+
+	if (total_len % (sc->dme_bits >> 3) != 0)
+		panic("dme_prepare: length is not compatible with IO_MODE");
+
+	sc->dme_txlen = total_len;
+	sc->dme_txready = 1;
+	DTR3("dme_prepare done, flags %#x busy %d ready %d",
+	    sc->dme_ifp->if_drv_flags, sc->dme_txbusy, sc->dme_txready);
+
+	m_freem(m);
+}
+
+void
+dme_transmit(struct dme_softc *sc)
+{
+
+	DME_ASSERT_LOCKED(sc);
+	KASSERT(sc->dme_txready, ("transmit without txready"));
+
+	dme_write_reg(sc, DME_TXPLL, sc->dme_txlen & 0xff);
+	dme_write_reg(sc, DME_TXPLH, (sc->dme_txlen >> 8) & 0xff );
+
+	/* Request to send the packet */
+	dme_read_reg(sc, DME_ISR);
+
+	dme_write_reg(sc, DME_TCR, TCR_TXREQ);
+
+	sc->dme_txready = 0;
+	sc->dme_txbusy = 1;
+	DTR3("dme_transmit done, flags %#x busy %d ready %d",
+	    sc->dme_ifp->if_drv_flags, sc->dme_txbusy, sc->dme_txready);
 }
 
 
@@ -294,63 +401,32 @@ static void
 dme_start_locked(struct ifnet *ifp)
 {
 	struct dme_softc *sc;
-	struct mbuf *m, *mp;
-	int len, total_len;
 
 	sc = ifp->if_softc;
-
 	DME_ASSERT_LOCKED(sc);
 
-	if (ifp->if_drv_flags & IFF_DRV_OACTIVE)
+	if ((ifp->if_drv_flags & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
+	    IFF_DRV_RUNNING)
 		return;
 
-	while (!IFQ_DRV_IS_EMPTY(&ifp->if_snd)) {
-		IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
-		if (m == NULL)
-			break;
+	DTR3("dme_start, flags %#x busy %d ready %d",
+	    sc->dme_ifp->if_drv_flags, sc->dme_txbusy, sc->dme_txready);
+	KASSERT(sc->dme_txbusy == 0 || sc->dme_txready == 0,
+	    ("dme: send without empty queue\n"));
 
-		/* Wait for the device to be free */
-		while (dme_read_reg(sc, DME_TCR) & TCR_TXREQ)
-			DELAY(1);
+	dme_prepare(sc);
 
-		/* Write the data to the network */
-		bus_space_write_1(sc->dme_tag, sc->dme_handle, CMD_ADDR,
-		    DME_MWCMD);
-
-		/*
-		 * TODO: Fix the case where an mbuf is
-		 * not a multiple of the write size.
-		 */
-		total_len = 0;
-		for (mp = m; mp != NULL; mp = mp->m_next) {
-			len = mp->m_len;
-
-			/* Ignore empty parts */
-			if (len == 0)
-				continue;
-
-			total_len += len;
-
-#if 0
-			bus_space_write_multi_2(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint16_t *), (len + 1) / 2);
-#else
-			bus_space_write_multi_1(sc->dme_tag, sc->dme_handle,
-			    DATA_ADDR, mtod(mp, uint8_t *), len);
-#endif
-		}
-
-		/* Send the data length */
-		dme_write_reg(sc, DME_TXPLL, total_len & 0xFF);
-		dme_write_reg(sc, DME_TXPLH, (total_len >> 8) & 0xFF);
-
-		/* Send the packet */
-		dme_write_reg(sc, DME_TCR, TCR_TXREQ);
-
-		BPF_MTAP(ifp, m);
-
-		m_freem(m);
+	if (sc->dme_txbusy == 0) {
+		/* We are ready to transmit right away */
+		dme_transmit(sc);
+		dme_prepare(sc); /* Prepare next one */
 	}
+	/*
+	 * We need to wait until the current packet has
+	 * been transmitted.
+	 */
+	if (sc->dme_txready != 0)
+		ifp->if_drv_flags |= IFF_DRV_OACTIVE;
 }
 
 static void
@@ -379,6 +455,11 @@ dme_stop(struct dme_softc *sc)
 
 	ifp = sc->dme_ifp;
 	ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
+
+	DTR3("dme_stop, flags %#x busy %d ready %d",
+	    sc->dme_ifp->if_drv_flags, sc->dme_txbusy, sc->dme_txready);
+	sc->dme_txbusy = 0;
+	sc->dme_txready = 0;
 }
 
 static int
@@ -497,16 +578,51 @@ dme_intr(void *arg)
 	intr_status = dme_read_reg(sc, DME_ISR);
 	dme_write_reg(sc, DME_ISR, intr_status);
 
+	DTR4("dme_intr flags %#x busy %d ready %d intr %#x",
+	    sc->dme_ifp->if_drv_flags, sc->dme_txbusy,
+	    sc->dme_txready, intr_status);
+
+	if (intr_status & ISR_PT) {
+		uint8_t nsr, tx_status;
+
+		sc->dme_txbusy = 0;
+
+		nsr = dme_read_reg(sc, DME_NSR);
+
+		if (nsr & NSR_TX1END)
+			tx_status = dme_read_reg(sc, DME_TSR1);
+		else if (nsr & NSR_TX2END)
+			tx_status = dme_read_reg(sc, DME_TSR2);
+		else
+			tx_status = 1;
+
+		DTR4("dme_intr flags %#x busy %d ready %d nsr %#x",
+		    sc->dme_ifp->if_drv_flags, sc->dme_txbusy,
+		    sc->dme_txready, nsr);
+
+		/* Prepare packet to send if none is currently pending */
+		if (sc->dme_txready == 0)
+			dme_prepare(sc);
+		/* Send the packet out of one is waiting for transmit */
+		if (sc->dme_txready != 0) {
+			/* Initiate transmission of the prepared packet */
+			dme_transmit(sc);
+			/* Prepare next packet to send */
+			dme_prepare(sc);
+			/*
+			 * We need to wait until the current packet has
+			 * been transmitted.
+			 */
+			if (sc->dme_txready != 0)
+				sc->dme_ifp->if_drv_flags |= IFF_DRV_OACTIVE;
+		}
+	}
+
 	if (intr_status & ISR_PR) {
 		/* Read the packets off the device */
 		while (dme_rxeof(sc) == 0)
 			continue;
 	}
-
-	if (intr_status & ISR_LNKCHG) {
-		printf("Link change interrupt\n");
-	}
-
 	DME_UNLOCK(sc);
 }
 
@@ -534,7 +650,7 @@ dme_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 		 */
 		DME_LOCK(sc);
 		if (ifp->if_flags & IFF_UP) {
-			if ((ifp->if_drv_flags & IFF_DRV_RUNNING)==0) {
+			if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
 				dme_init_locked(sc);
 			}
 		} else {
