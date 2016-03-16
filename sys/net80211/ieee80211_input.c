@@ -249,9 +249,7 @@ ieee80211_defrag(struct ieee80211_node *ni, struct mbuf *m, int hdrspace)
 		mfrag = m;
 	} else {				/* concatenate */
 		m_adj(m, hdrspace);		/* strip header */
-		m_cat(mfrag, m);
-		/* NB: m_cat doesn't update the packet header */
-		mfrag->m_pkthdr.len += m->m_pkthdr.len;
+		m_catpkt(mfrag, m);
 		/* track last seqnum and fragno */
 		lwh = mtod(mfrag, struct ieee80211_frame *);
 		*(uint16_t *) lwh->i_seq = *(uint16_t *) wh->i_seq;
@@ -572,6 +570,8 @@ ieee80211_parse_beacon(struct ieee80211_node *ni, struct mbuf *m,
 		case IEEE80211_ELEMID_IBSSPARMS:
 		case IEEE80211_ELEMID_CFPARMS:
 		case IEEE80211_ELEMID_PWRCNSTR:
+		case IEEE80211_ELEMID_BSSLOAD:
+		case IEEE80211_ELEMID_APCHANREP:
 			/* NB: avoid debugging complaints */
 			break;
 		case IEEE80211_ELEMID_XRATES:
@@ -602,6 +602,8 @@ ieee80211_parse_beacon(struct ieee80211_node *ni, struct mbuf *m,
 			break;
 		case IEEE80211_ELEMID_MESHCONF:
 			scan->meshconf = frm;
+			break;
+		case IEEE80211_ELEMID_MESHEXTCAP:
 			break;
 #endif
 		case IEEE80211_ELEMID_VENDOR:

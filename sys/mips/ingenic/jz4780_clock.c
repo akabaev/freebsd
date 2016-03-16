@@ -566,9 +566,7 @@ jz4780_clock_write_4(device_t dev, bus_addr_t addr, uint32_t val)
 	struct jz4780_clock_softc *sc;
 
 	sc = device_get_softc(dev);
-	CGU_LOCK(sc);
 	CSR_WRITE_4(sc, addr, val);
-	CGU_UNLOCK(sc);
 	return (0);
 }
 
@@ -578,9 +576,7 @@ jz4780_clock_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
 	struct jz4780_clock_softc *sc;
 
 	sc = device_get_softc(dev);
-	CGU_LOCK(sc);
 	*val = CSR_READ_4(sc, addr);
-	CGU_UNLOCK(sc);
 	return (0);
 }
 
@@ -592,13 +588,29 @@ jz4780_clock_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
 	uint32_t val;
 
 	sc = device_get_softc(dev);
-	CGU_LOCK(sc);
 	val = CSR_READ_4(sc, addr);
 	val &= clear_mask;
 	val |= set_mask;
 	CSR_WRITE_4(sc, addr, val);
-	CGU_UNLOCK(sc);
 	return (0);
+}
+
+static void
+jz4780_clock_device_lock(device_t dev)
+{
+	struct jz4780_clock_softc *sc;
+
+	sc = device_get_softc(dev);
+	CGU_LOCK(sc);
+}
+
+static void
+jz4780_clock_device_unlock(device_t dev)
+{
+	struct jz4780_clock_softc *sc;
+
+	sc = device_get_softc(dev);
+	CGU_UNLOCK(sc);
 }
 
 static device_method_t jz4780_clock_methods[] = {
@@ -611,6 +623,8 @@ static device_method_t jz4780_clock_methods[] = {
 	DEVMETHOD(clkdev_write_4,	jz4780_clock_write_4),
 	DEVMETHOD(clkdev_read_4,	jz4780_clock_read_4),
 	DEVMETHOD(clkdev_modify_4,	jz4780_clock_modify_4),
+	DEVMETHOD(clkdev_device_lock,	jz4780_clock_device_lock),
+	DEVMETHOD(clkdev_device_unlock,	jz4780_clock_device_unlock),
 
 	DEVMETHOD_END
 };

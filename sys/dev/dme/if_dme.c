@@ -70,10 +70,10 @@ __FBSDID("$FreeBSD$");
 #include <dev/dme/if_dmereg.h>
 #include <dev/dme/if_dmevar.h>
 
-#include <dev/fdt/fdt_regulator.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
+#include <dev/extres/regulator/regulator.h>
 #include <dev/gpio/gpiobusvar.h>
 
 #include "miibus_if.h"
@@ -94,6 +94,7 @@ struct dme_softc {
 	struct gpiobus_pin	*gpio_rset;
 	uint32_t		dme_ticks;
 	uint8_t			dme_macaddr[ETHER_ADDR_LEN];
+	regulator_t		dme_vcc_regulator;
 };
 
 #define DME_CHIP_DM9000		0x00
@@ -667,11 +668,14 @@ dme_attach(device_t dev)
 	/*
 	 * Power the chip up, if necessary
 	 */
-	error = fdt_regulator_enable_by_name(dev, "vcc-supply");
-	if (error != 0) {
-		device_printf(dev, "unable to enable power supply\n");
-		error = ENXIO;
-		goto fail;
+	error = regulator_get_by_ofw_property(dev, "vcc-supply", &sc->dme_vcc_regulator);
+	if (error == 0) {
+		error = regulator_enable(sc->dme_vcc_regulator);
+		if (error != 0) {
+			device_printf(dev, "unable to enable power supply\n");
+			error = ENXIO;
+			goto fail;
+		}
 	}
 
 	/*
@@ -834,6 +838,8 @@ dme_detach(device_t dev)
 		device_delete_child(dev, sc->dme_miibus);
 	bus_generic_detach(dev);
 
+	if (sc->dme_vcc_regulator != 0)
+		regulator_release(sc->dme_vcc_regulator);
 	if (sc->dme_intrhand)
 		bus_teardown_intr(dev, sc->dme_irq, sc->dme_intrhand);
 	if (sc->dme_irq)
