@@ -87,7 +87,8 @@ struct jz4780_mmc_softc {
 	struct mmc_request *	sc_req;
 	struct mtx		sc_mtx;
 	struct resource *	sc_res[JZ_MSC_RESSZ];
-	uint32_t		sc_intr;
+	uint32_t		sc_intr_seen;
+	uint32_t		sc_intr_mask;
 	uint32_t		sc_intr_wait;
 	void *			sc_intrhand;
 	uint32_t		sc_cmdat;
@@ -101,6 +102,7 @@ struct jz4780_mmc_softc {
 	bus_dma_tag_t		sc_dma_buf_tag;
 	int			sc_dma_inuse;
 	int			sc_dma_map_err;
+	uint32_t		sc_dma_ctl;
 };
 
 static struct resource_spec jz4780_mmc_res_spec[] = {
@@ -350,6 +352,12 @@ jz4780_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 			dma_desc[i].dma_next = 0;
 			dma_desc[i].dma_cmd = (i << 16) | JZ_DMA_ENDI;
 		}
+#ifdef JZ_MMC_DEBUG
+		device_printf(sc->sc_dev, "%d: desc %#x phys %#x len %d next %#x cmd %#x\n",
+		    i, dma_desc_phys - sizeof(struct jz4780_mmc_dma_desc),
+		    dma_desc[i].dma_phys, dma_desc[i].dma_len,
+		    dma_desc[i].dma_next, dma_desc[i].dma_cmd);
+#endif
  	}
 }
 
@@ -359,7 +367,7 @@ jz4780_mmc_prepare_dma(struct jz4780_mmc_softc *sc)
 	bus_dmasync_op_t sync_op;
 	int error;
 	struct mmc_command *cmd;
-	uint32_t val, off;
+	uint32_t off;
 
 	cmd = sc->sc_req->cmd;
 	if (cmd->data->len > JZ_MSC_DMA_MAX_SIZE * JZ_MSC_DMA_SEGS)
@@ -380,26 +388,29 @@ jz4780_mmc_prepare_dma(struct jz4780_mmc_softc *sc)
 	bus_dmamap_sync(sc->sc_dma_buf_tag, sc->sc_dma_buf_map, sync_op);
 	bus_dmamap_sync(sc->sc_dma_tag, sc->sc_dma_map, BUS_DMASYNC_PREWRITE);
 
-	/* Set the address of the first descriptor */
-	JZ_MMC_WRITE_4(sc, JZ_MSC_DMANDA, sc->sc_dma_desc_phys);
-
 	/* Configure default DMA parameters */
-	val = JZ_MODE_SEL | JZ_INCR_32 | JZ_DMAEN;
+	sc->sc_dma_ctl = JZ_MODE_SEL | JZ_INCR_32 | JZ_DMAEN;
 
 	/* Enable unaligned buffer handling */
 	off = (uintptr_t)cmd->data->data & 3;
 	if (off != 0)
-		val |= (off << JZ_AOFST_S) | JZ_ALIGNEN;
-
-	/* Enable and start the dma engine */
-	JZ_MMC_WRITE_4(sc, JZ_MSC_DMAC, val);
+		sc->sc_dma_ctl |= (off << JZ_AOFST_S) | JZ_ALIGNEN;
 	return (0);
+}
+
+static void
+jz4780_mmc_start_dma(struct jz4780_mmc_softc *sc)
+{
+
+	/* Set the address of the first descriptor */
+	JZ_MMC_WRITE_4(sc, JZ_MSC_DMANDA, sc->sc_dma_desc_phys);
+	/* Enable and start the dma engine */
+	JZ_MMC_WRITE_4(sc, JZ_MSC_DMAC, sc->sc_dma_ctl);
 }
 
 static int
 jz4780_mmc_reset(struct jz4780_mmc_softc *sc)
 {
-	uint32_t val;
 	int timeout;
 
 	JZ_MMC_WRITE_4(sc, JZ_MSC_CTRL,
@@ -417,18 +428,13 @@ jz4780_mmc_reset(struct jz4780_mmc_softc *sc)
 	JZ_MMC_WRITE_4(sc, JZ_MSC_RESTO, 0xffff);
 	JZ_MMC_WRITE_4(sc, JZ_MSC_RDTO, 0xffffffff);
 
-	/* Mask all interrupts initially. */
+	/* Mask all interrupt initially */
 	JZ_MMC_WRITE_4(sc, JZ_MSC_IMASK, 0xffffffff);
 	/* Clear pending interrupts. */
 	JZ_MMC_WRITE_4(sc, JZ_MSC_IFLG, 0xffffffff);
 
-	/* Unmask common interrupts we use */
-	val = ~(JZ_INT_DMAEND | JZ_INT_AUTO_CMD12_DONE | JZ_INT_END_CMD_RES |
-	    JZ_INT_DATA_TRAN_DONE | JZ_INT_TXFIFO_WR_REQ |
-	    JZ_INT_RXFIFO_RD_REQ);
-	/* Unmask error interrupts */
-	val &= ~JZ_MSC_INT_ERR_BITS;
-	JZ_MMC_WRITE_4(sc, JZ_MSC_IMASK, val);
+	/* Remember interrupts we always want */
+	sc->sc_intr_mask = JZ_MSC_INT_ERR_BITS;
 
 	return (0);
 }
@@ -459,11 +465,11 @@ jz4780_mmc_req_done(struct jz4780_mmc_softc *sc)
 	req = sc->sc_req;
 	callout_stop(&sc->sc_timeoutc);
 	sc->sc_req = NULL;
-	sc->sc_intr = 0;
 	sc->sc_resid = 0;
 	sc->sc_dma_inuse = 0;
 	sc->sc_dma_map_err = 0;
 	sc->sc_intr_wait = 0;
+	sc->sc_intr_seen = 0;
 	req->done(req);
 }
 
@@ -525,14 +531,14 @@ jz4780_mmc_timeout(void *arg)
 static int
 jz4780_mmc_pio_transfer(struct jz4780_mmc_softc *sc, struct mmc_data *data)
 {
-	uint32_t bit, *buf;
+	uint32_t mask, *buf;
 	int i, write;
 
 	buf = (uint32_t *)data->data;
 	write = (data->flags & MMC_DATA_WRITE) ? 1 : 0;
-	bit = write ? JZ_DATA_FIFO_FULL : JZ_DATA_FIFO_EMPTY;
+	mask = write ? JZ_DATA_FIFO_FULL : JZ_DATA_FIFO_EMPTY;
 	for (i = sc->sc_resid; i < (data->len >> 2); i++) {
-		if ((JZ_MMC_READ_4(sc, JZ_MSC_STAT) & bit))
+		if ((JZ_MMC_READ_4(sc, JZ_MSC_STAT) & mask))
 			return (1);
 		if (write)
 			JZ_MMC_WRITE_4(sc, JZ_MSC_TXFIFO, buf[i]);
@@ -540,6 +546,11 @@ jz4780_mmc_pio_transfer(struct jz4780_mmc_softc *sc, struct mmc_data *data)
 			buf[i] = JZ_MMC_READ_4(sc, JZ_MSC_RXFIFO);
 		sc->sc_resid = i + 1;
 	}
+
+	/* Done with pio transfer, shut FIFO interrupts down */
+	mask = JZ_MMC_READ_4(sc, JZ_MSC_IMASK);
+	mask |= (JZ_INT_TXFIFO_WR_REQ | JZ_INT_RXFIFO_RD_REQ);
+	JZ_MMC_WRITE_4(sc, JZ_MSC_IMASK, mask);
 	return (0);
 }
 
@@ -553,9 +564,17 @@ jz4780_mmc_intr(void *arg)
 	sc = (struct jz4780_mmc_softc *)arg;
 	JZ_MMC_LOCK(sc);
 	rint  = JZ_MMC_READ_4(sc, JZ_MSC_IFLG);
-#ifdef JZ_MMC_DEBUG
+#if defined(JZ_MMC_DEBUG)
 	device_printf(sc->sc_dev, "rint: %#x, stat: %#x\n",
 	    rint, JZ_MMC_READ_4(sc, JZ_MSC_STAT));
+	if (sc->sc_dma_inuse == 1 && (sc->sc_intr_seen & JZ_INT_DMAEND) == 0)
+		device_printf(sc->sc_dev, "\tdmada %#x dmanext %#x dmac %#x"
+		    " dmalen %d dmacmd %#x\n",
+		    JZ_MMC_READ_4(sc, JZ_MSC_DMADA),
+		    JZ_MMC_READ_4(sc, JZ_MSC_DMANDA),
+		    JZ_MMC_READ_4(sc, JZ_MSC_DMAC),
+		    JZ_MMC_READ_4(sc, JZ_MSC_DMALEN),
+		    JZ_MMC_READ_4(sc, JZ_MSC_DMACMD));
 #endif
 	if (sc->sc_req == NULL) {
 		device_printf(sc->sc_dev,
@@ -564,9 +583,8 @@ jz4780_mmc_intr(void *arg)
 		goto end;
 	}
 	if (rint & JZ_MSC_INT_ERR_BITS) {
-#ifdef JZ_MMC_DEBUG
-		device_printf(sc->sc_dev, "error rint: 0x%08X\n", rint);
-#endif
+		device_printf(sc->sc_dev, "controller error, rint %#x stat %#x\n",
+		    rint,  JZ_MMC_READ_4(sc, JZ_MSC_STAT));
 		if (rint & (JZ_INT_TIMEOUT_RES | JZ_INT_TIMEOUT_READ))
 			sc->sc_req->cmd->error = MMC_ERR_TIMEOUT;
 		else
@@ -574,11 +592,13 @@ jz4780_mmc_intr(void *arg)
 		jz4780_mmc_req_done(sc);
 		goto end;
 	}
-	sc->sc_intr |= rint;
 	data = sc->sc_req->cmd->data;
 	/* Check for command response */
-	if (rint & JZ_INT_END_CMD_RES)
+	if (rint & JZ_INT_END_CMD_RES) {
 		jz4780_mmc_read_response(sc);
+		if (sc->sc_dma_inuse == 1)
+			jz4780_mmc_start_dma(sc);
+	}
 	if (data != NULL) {
 		if (sc->sc_dma_inuse == 1 && (rint & JZ_INT_DMAEND))
 			sc->sc_resid = data->len >> 2;
@@ -586,7 +606,8 @@ jz4780_mmc_intr(void *arg)
 		    (rint & (JZ_INT_TXFIFO_WR_REQ | JZ_INT_RXFIFO_RD_REQ)))
 			jz4780_mmc_pio_transfer(sc, data);
 	}
-	if ((sc->sc_intr & sc->sc_intr_wait) == sc->sc_intr_wait)
+	sc->sc_intr_seen |= rint;
+	if ((sc->sc_intr_seen & sc->sc_intr_wait) == sc->sc_intr_wait)
 		jz4780_mmc_req_ok(sc);
 end:
 	JZ_MMC_WRITE_4(sc, JZ_MSC_IFLG, rint);
@@ -598,7 +619,7 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 {
 	struct jz4780_mmc_softc *sc;
 	struct mmc_command *cmd;
-	uint32_t cmdat, ctrl;
+	uint32_t cmdat, ctrl, iwait;
 	int blksz;
 
 	sc = device_get_softc(bus);
@@ -609,6 +630,7 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 	}
 	/* Start with template value */
 	cmdat = sc->sc_cmdat;
+	iwait = JZ_INT_END_CMD_RES;
 
 	/* Configure response format */
 	cmd = req->cmd;
@@ -630,23 +652,23 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 		cmdat |= JZ_BUSY;
 
 	sc->sc_req = req;
-	sc->sc_intr = 0;
 	sc->sc_resid = 0;
-	sc->sc_intr_wait = JZ_INT_END_CMD_RES;
 	cmd->error = MMC_ERR_NONE;
 
 	if (cmd->data != NULL) {
 		cmdat |= JZ_DATA_EN;
 		if (cmd->data->flags & MMC_DATA_MULTI) {
 			cmdat |= JZ_AUTO_CMD12;
-			sc->sc_intr_wait |= JZ_INT_AUTO_CMD12_DONE;
+			iwait |= JZ_INT_AUTO_CMD12_DONE;
 		}
-		if (cmd->data->flags & MMC_DATA_WRITE)
+		if (cmd->data->flags & MMC_DATA_WRITE) {
 			cmdat |= JZ_WRITE;
+			iwait |= JZ_INT_PRG_DONE;
+		}
 		if (cmd->data->flags & MMC_DATA_STREAM)
 			cmdat |= JZ_STREAM;
 		else
-			sc->sc_intr_wait |= JZ_INT_DATA_TRAN_DONE;
+			iwait |= JZ_INT_DATA_TRAN_DONE;
 
 		blksz = min(cmd->data->len, MMC_SECTOR_SIZE);
 		JZ_MMC_WRITE_4(sc, JZ_MSC_BLKLEN, blksz);
@@ -657,11 +679,23 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 			jz4780_mmc_prepare_dma(sc);
 		if (sc->sc_dma_inuse != 0) {
 			/* Wait for DMA completion interrupt */
-			sc->sc_intr_wait |= JZ_INT_DMAEND;
+			iwait |= JZ_INT_DMAEND;
 		} else {
+			iwait |= (cmd->data->flags & MMC_DATA_WRITE) ?
+			    JZ_INT_TXFIFO_WR_REQ : JZ_INT_RXFIFO_RD_REQ;
 			JZ_MMC_WRITE_4(sc, JZ_MSC_DMAC, 0);
 		}
 	}
+
+	sc->sc_intr_seen = 0;
+	sc->sc_intr_wait = iwait;
+	JZ_MMC_WRITE_4(sc, JZ_MSC_IMASK, ~(sc->sc_intr_mask | iwait));
+
+#if defined(JZ_MMC_DEBUG)
+	device_printf(sc->sc_dev,
+	    "REQUEST: CMD%u arg %#x flags %#x cmdat %#x sc_intr_wait = %#x",
+	    cmd->opcode, cmd->arg, cmd->flags, cmdat, sc->sc_intr_wait);
+#endif
 
 	JZ_MMC_WRITE_4(sc, JZ_MSC_ARG, cmd->arg);
 	JZ_MMC_WRITE_4(sc, JZ_MSC_CMD, cmd->opcode);
@@ -671,10 +705,6 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 	ctrl |= JZ_START_OP | JZ_CLOCK_START;
 	JZ_MMC_WRITE_4(sc, JZ_MSC_CTRL, ctrl);
 
-#ifdef JZ_MMC_DEBUG
-	device_printf(sc->sc_dev, "REQUEST: CMD%u arg %#x flags %#x cmdat %#x sc_intr_wait = %#x\n",
-	    cmd->opcode, cmd->arg, cmd->flags, cmdat, sc->sc_intr_wait);
-#endif
 	callout_reset(&sc->sc_timeoutc, sc->sc_timeout * hz,
 	    jz4780_mmc_timeout, sc);
 	JZ_MMC_UNLOCK(sc);
