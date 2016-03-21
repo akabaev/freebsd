@@ -583,8 +583,10 @@ jz4780_mmc_intr(void *arg)
 		goto end;
 	}
 	if (rint & JZ_MSC_INT_ERR_BITS) {
+#if defined(JZ_MMC_DEBUG)
 		device_printf(sc->sc_dev, "controller error, rint %#x stat %#x\n",
 		    rint,  JZ_MMC_READ_4(sc, JZ_MSC_STAT));
+#endif
 		if (rint & (JZ_INT_TIMEOUT_RES | JZ_INT_TIMEOUT_READ))
 			sc->sc_req->cmd->error = MMC_ERR_TIMEOUT;
 		else
@@ -648,8 +650,10 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 	};
 	if (cmd->opcode == MMC_GO_IDLE_STATE)
 		cmdat |= JZ_INIT;
-	if (cmd->flags & MMC_RSP_BUSY)
+	if (cmd->flags & MMC_RSP_BUSY) {
 		cmdat |= JZ_BUSY;
+		iwait |= JZ_INT_PRG_DONE;
+	}
 
 	sc->sc_req = req;
 	sc->sc_resid = 0;
