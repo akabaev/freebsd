@@ -693,7 +693,7 @@ jz4780_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 
 #if defined(JZ_MMC_DEBUG)
 	device_printf(sc->sc_dev,
-	    "REQUEST: CMD%u arg %#x flags %#x cmdat %#x sc_intr_wait = %#x",
+	    "REQUEST: CMD%u arg %#x flags %#x cmdat %#x sc_intr_wait = %#x\n",
 	    cmd->opcode, cmd->arg, cmd->flags, cmdat, sc->sc_intr_wait);
 #endif
 
@@ -838,7 +838,6 @@ jz4780_mmc_config_clock(struct jz4780_mmc_softc *sc, uint32_t freq)
 		return (err);
 
 	clk_get_freq(sc->sc_clk, &rate);
-
 	clk_freq = (uint32_t)rate;
 
 	div = 0;
@@ -848,6 +847,11 @@ jz4780_mmc_config_clock(struct jz4780_mmc_softc *sc, uint32_t freq)
 	}
 	if (div >= 7)
 		div = 7;
+#if defined(JZ_MMC_DEBUG)
+	if (div != JZ_MMC_READ_4(sc, JZ_MSC_CLKRT))
+		device_printf(sc->sc_dev,
+		    "UPDATE_IOS: clk -> %u\n", clk_freq);
+#endif
 	JZ_MMC_WRITE_4(sc, JZ_MSC_CLKRT, div);
 	return (0);
 }
@@ -959,3 +963,4 @@ static driver_t jz4780_mmc_driver = {
 
 DRIVER_MODULE(jz4780_mmc, simplebus, jz4780_mmc_driver, jz4780_mmc_devclass, 0, 0);
 DRIVER_MODULE(mmc, jz4780_mmc, mmc_driver, mmc_devclass, NULL, NULL);
+MODULE_DEPEND(a10_mmc, mmc, 1, 1, 1);
