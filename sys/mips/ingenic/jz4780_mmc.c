@@ -960,11 +960,11 @@ static device_method_t jz4780_mmc_methods[] = {
 static devclass_t jz4780_mmc_devclass;
 
 static driver_t jz4780_mmc_driver = {
-	"jz4780_mmc",
+	"jzmmc",
 	jz4780_mmc_methods,
 	sizeof(struct jz4780_mmc_softc),
 };
 
-DRIVER_MODULE(jz4780_mmc, simplebus, jz4780_mmc_driver, jz4780_mmc_devclass, 0, 0);
-DRIVER_MODULE(mmc, jz4780_mmc, mmc_driver, mmc_devclass, NULL, NULL);
-MODULE_DEPEND(a10_mmc, mmc, 1, 1, 1);
+DRIVER_MODULE(jzmmc, simplebus, jz4780_mmc_driver, jz4780_mmc_devclass, 0, 0);
+DRIVER_MODULE(mmc, jzmmc, mmc_driver, mmc_devclass, NULL, NULL);
+MODULE_DEPEND(jzmmc, mmc, 1, 1, 1);

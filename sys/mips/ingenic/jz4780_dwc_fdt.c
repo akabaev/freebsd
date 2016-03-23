@@ -195,8 +195,8 @@ static device_method_t jz4780_dwc_otg_methods[] = {
 
 static devclass_t jz4780_dwc_otg_devclass;
 
-DEFINE_CLASS_1(jz4780_dwcotg, jz4780_dwc_otg_driver, jz4780_dwc_otg_methods,
+DEFINE_CLASS_1(jzotg, jz4780_dwc_otg_driver, jz4780_dwc_otg_methods,
     sizeof(struct jz4780_dwc_otg_softc), dwc_otg_driver);
-DRIVER_MODULE(jz4780_dwcotg, simplebus, jz4780_dwc_otg_driver,
+DRIVER_MODULE(jzotg, simplebus, jz4780_dwc_otg_driver,
     jz4780_dwc_otg_devclass, 0, 0);
-MODULE_DEPEND(jz4780_dwcotg, usb, 1, 1, 1);
+MODULE_DEPEND(jzotg, usb, 1, 1, 1);
