@@ -109,22 +109,22 @@ static const uint8_t ticks_to_tBP_tAW[32] = {
 
 static int
 jz4780_nemc_configure_bank(struct jz4780_nemc_softc *sc,
-        struct jz4780_nemc_devinfo *ndi)
+        device_t dev, u_int bank)
 {
 	uint32_t smcr, cycles;
 	phandle_t node;
 	pcell_t   val;
 
 	/* Check if bank is configured already */
-	if (sc->banks & (1 << ndi->bank))
+	if (sc->banks & (1 << bank))
 		return 0;
 
-	smcr = CSR_READ_4(sc, JZ_NEMC_SMCR(ndi->bank));
+	smcr = CSR_READ_4(sc, JZ_NEMC_SMCR(bank));
 
 	smcr &= ~JZ_NEMC_SMCR_SMT_MASK;
 	smcr |= JZ_NEMC_SMCR_SMT_NORMAL << JZ_NEMC_SMCR_SMT_SHIFT;
 
-	node = ndi->sinfo.obdinfo.obd_node;
+	node = ofw_bus_get_node(dev);
 	if (OF_getencprop(node, "ingenic,nemc-tAS", &val, sizeof(val)) > 0) {
 		cycles = JZ4780_NEMC_NS_TO_TICKS(sc, val);
 		if (cycles > 15) {
@@ -184,8 +184,8 @@ jz4780_nemc_configure_bank(struct jz4780_nemc_softc *sc,
 		smcr &= ~JZ_NEMC_SMCR_STRV_MASK;
 		smcr |= cycles << JZ_NEMC_SMCR_STRV_SHIFT;
 	}
-	CSR_WRITE_4(sc, JZ_NEMC_SMCR(ndi->bank), smcr);
-	sc->banks |= (1 << ndi->bank);
+	CSR_WRITE_4(sc, JZ_NEMC_SMCR(bank), smcr);
+	sc->banks |= (1 << bank);
 	return 0;
 }
 
@@ -240,215 +240,6 @@ jz4780_nemc_fill_ranges(phandle_t node, struct simplebus_softc *sc)
 }
 
 static int
-jz4780_map_address(struct simplebus_softc *sc,
-    struct jz4780_nemc_devinfo *ndi, const char *name, uint64_t *start_p,
-    uint64_t size)
-{
-	uint64_t start, end;
-	int j;
-
-	/* Remap through ranges property */
-	start = *start_p;
-	end = start + size - 1;
-	for (j = 0; j < sc->nranges; j++) {
-		if (start >= sc->ranges[j].bus && end <
-		    sc->ranges[j].bus + sc->ranges[j].size) {
-			start -= sc->ranges[j].bus;
-			start += sc->ranges[j].host;
-
-			*start_p = start;
-			/* Remember banks this device needs */
-			ndi->bank = (sc->ranges[j].bus >> 32);
-			return 0;
-		}
-	}
-	if (sc->nranges != 0) {
-		if (bootverbose)
-			device_printf(sc->dev, "Malformed reg property on <%s>\n",
-			    (name == NULL) ? "unknown" : name);
-	}
-	return (-1);
-}
-
-/*
- * Same thing as ofw_bus_reg_to_rl, but does translate addresses against
- * ranges at probe time, to keep them 32 bit.
- */
-static void
-jz4780_nemc_reg_to_rl(struct simplebus_softc *sc,
-    struct jz4780_nemc_devinfo *ndi)
-{
-	uint64_t phys, size;
-	ssize_t i, j, rid, nreg, ret;
-	uint32_t *reg;
-	char *name;
-	phandle_t node;
-       	pcell_t acells;
-       	pcell_t scells;
-	struct resource_list *rl;
-
-	node = ndi->sinfo.obdinfo.obd_node;
-	acells = sc->acells;
-	scells = sc->scells;
-	rl = &ndi->sinfo.rl;
-
-	/*
-	 * This may be just redundant when having ofw_bus_devinfo
-	 * but makes this routine independent of it.
-	 */
-	ret = OF_getprop_alloc(node, "name", sizeof(*name), (void **)&name);
-	if (ret == -1)
-		name = NULL;
-
-	ret = OF_getencprop_alloc(node, "reg", sizeof(*reg), (void **)&reg);
-	nreg = (ret == -1) ? 0 : ret;
-
-	if (nreg % (acells + scells) != 0) {
-		if (bootverbose)
-			device_printf(sc->dev, "Malformed reg property on <%s>\n",
-			    (name == NULL) ? "unknown" : name);
-		nreg = 0;
-	}
-
-	for (i = 0, rid = 0; i < nreg; i += acells + scells, rid++) {
-		phys = size = 0;
-		for (j = 0; j < acells; j++) {
-			phys <<= 32;
-			phys |= reg[i + j];
-		}
-		for (j = 0; j < scells; j++) {
-			size <<= 32;
-			size |= reg[i + acells + j];
-		}
-		if (size != 0) {
-			/*
-			 * Translate address into host address right here
-			 * and nows, since 64 bit address cannot be
-			 * represented in the resource list.
-			 */
-		       	if (!jz4780_map_address(sc, ndi, name, &phys, size))
-				resource_list_add(rl, SYS_RES_MEMORY, rid,
-				    phys, phys + size - 1, size);
-		}
-	}
-	free(name, M_OFWPROP);
-	free(reg, M_OFWPROP);
-}
-
-static struct simplebus_devinfo *
-jz4780_nemc_setup_dinfo(device_t dev, phandle_t node)
-{
-	struct jz4780_nemc_softc *sc;
-	struct jz4780_nemc_devinfo *ndi;
-
-	sc = device_get_softc(dev);
-
-	ndi = malloc(sizeof(*ndi), M_DEVBUF, M_WAITOK | M_ZERO);
-	if (ofw_bus_gen_setup_devinfo(&ndi->sinfo.obdinfo, node) != 0) {
-		free(ndi, M_DEVBUF);
-		return (NULL);
-	}
-
-	/* Fetch and translate resources */
-	resource_list_init(&ndi->sinfo.rl);
-	jz4780_nemc_reg_to_rl(&sc->simplebus_sc, ndi);
-	ofw_bus_intr_to_rl(dev, node, &ndi->sinfo.rl, NULL);
-
-	/* Configure the bank if we did not see it being used already */
-	if (jz4780_nemc_configure_bank(sc, ndi) != 0) {
-		ofw_bus_gen_destroy_devinfo(&ndi->sinfo.obdinfo);
-		resource_list_free(&ndi->sinfo.rl);
-		free(ndi, M_DEVBUF);
-		return (NULL);
-	}
-
-	return (&ndi->sinfo);
-}
-
-static device_t
-jz4780_nemc_add_device(device_t dev, phandle_t node, u_int order,
-    const char *name, int unit)
-{
-	struct simplebus_devinfo *ndi;
-	device_t cdev;
-
-	if ((ndi = jz4780_nemc_setup_dinfo(dev, node)) == NULL)
-		return (NULL);
-
-	cdev = device_add_child_ordered(dev, order, name, unit);
-	if (cdev == NULL) {
-		device_printf(dev, "<%s>: device_add_child failed\n",
-		    ndi->obdinfo.obd_name);
-		resource_list_free(&ndi->rl);
-		ofw_bus_gen_destroy_devinfo(&ndi->obdinfo);
-		free(ndi, M_DEVBUF);
-		return (NULL);
-	}
-	device_set_ivars(cdev, ndi);
-
-	return(cdev);
-}
-
-static device_t
-jz4780_nemc_add_child(device_t dev, u_int order, const char *name, int unit)
-{
-	device_t cdev;
-	struct jz4780_nemc_devinfo *ndi;
-
-	cdev = device_add_child_ordered(dev, order, name, unit);
-	if (cdev == NULL)
-		return (NULL);
-
-	ndi = malloc(sizeof(*ndi), M_DEVBUF, M_WAITOK | M_ZERO);
-	ndi->sinfo.obdinfo.obd_node = -1;
-	resource_list_init(&ndi->sinfo.rl);
-	device_set_ivars(cdev, ndi);
-
-	return (cdev);
-}
-
-/*
- * Copy of simplebus counterpart with range remapping step removed,
- * since remapping was done at the probe time.
- */
-static struct resource *
-jz4780_nemc_alloc_resource(device_t bus, device_t child, int type, int *rid,
-    rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
-{
-	struct simplebus_softc *sc;
-	struct simplebus_devinfo *di;
-	struct resource_list_entry *rle;
-
-	sc = device_get_softc(bus);
-
-	/*
-	 * Request for the default allocation with a given rid: use resource
-	 * list stored in the local device info.
-	 */
-	if ((start == 0UL) && (end == ~0UL)) {
-		if ((di = device_get_ivars(child)) == NULL)
-			return (NULL);
-
-		if (type == SYS_RES_IOPORT)
-			type = SYS_RES_MEMORY;
-
-		rle = resource_list_find(&di->rl, type, *rid);
-		if (rle == NULL) {
-			if (bootverbose)
-				device_printf(bus, "no default resources for "
-				    "rid = %d, type = %d\n", *rid, type);
-			return (NULL);
-		}
-		start = rle->start;
-		end = rle->end;
-		count = rle->count;
-        }
-
-	return (bus_generic_alloc_resource(bus, child, type, rid, start, end,
-	    count, flags));
-}
-
-static int
 jz4780_nemc_attach(device_t dev)
 {
 	struct jz4780_nemc_softc *sc = device_get_softc(dev);
@@ -496,7 +287,7 @@ jz4780_nemc_attach(device_t dev)
 	 * Now walk the tree and attach top level devices
 	 */
 	for (node = OF_child(node); node > 0; node = OF_peer(node))
-		jz4780_nemc_add_device(dev, node, 0, NULL, -1);
+		simplebus_add_device(dev, node, 0, NULL, -1, NULL);
 
 	return (bus_generic_attach(dev));
 error:
@@ -516,15 +307,61 @@ jz4780_nemc_detach(device_t dev)
 	return (0);
 }
 
+static int
+jz4780_nemc_decode_bank(struct simplebus_softc *sc, struct resource *r,
+    u_int *bank)
+{
+	rman_res_t start, end;
+	int i;
+
+	start = rman_get_start(r);
+	end = rman_get_end(r);
+
+	/* Remap through ranges property */
+	for (i = 0; i < sc->nranges; i++) {
+		if (start >= sc->ranges[i].host && end <
+		    sc->ranges[i].host + sc->ranges[i].size) {
+			*bank = (sc->ranges[i].bus >> 24);
+			return (0);
+		}
+	}
+	return (1);
+}
+
+static int
+jz4780_nemc_activate_resource(device_t bus, device_t child, int type, int rid,
+    struct resource *r)
+{
+	struct jz4780_nemc_softc *sc;
+	u_int bank;
+	int err;
+
+	if (type == SYS_RES_MEMORY) {
+		sc = device_get_softc(bus);
+
+		/* Figure out on what bank device is residing */
+		err = jz4780_nemc_decode_bank(&sc->simplebus_sc, r, &bank);
+		if (err == 0) {
+			/* Attempt to configure the bank if not done already */
+			err = jz4780_nemc_configure_bank(sc, child, bank);
+			if (err != 0)
+				return (err);
+		}
+	}
+
+	/* Call default implementation to finish the work */
+	return (bus_generic_activate_resource(bus, child,
+		type, rid, r));
+}
+
 static device_method_t jz4780_nemc_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		jz4780_nemc_probe),
 	DEVMETHOD(device_attach,	jz4780_nemc_attach),
 	DEVMETHOD(device_detach,	jz4780_nemc_detach),
 
-	/* Overrides to compensate for simplebus 32bit-ness */
-	DEVMETHOD(bus_add_child,	jz4780_nemc_add_child),
-	DEVMETHOD(bus_alloc_resource,	jz4780_nemc_alloc_resource),
+	/* Overrides to configure bank on resource activation */
+	DEVMETHOD(bus_activate_resource, jz4780_nemc_activate_resource),
 
 	DEVMETHOD_END
 };
