@@ -321,7 +321,7 @@ jz4780_nemc_decode_bank(struct simplebus_softc *sc, struct resource *r,
 	for (i = 0; i < sc->nranges; i++) {
 		if (start >= sc->ranges[i].host && end <
 		    sc->ranges[i].host + sc->ranges[i].size) {
-			*bank = (sc->ranges[i].bus >> 24);
+			*bank = (sc->ranges[i].bus >> 32);
 			return (0);
 		}
 	}
