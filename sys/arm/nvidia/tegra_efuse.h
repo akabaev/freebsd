@@ -1,6 +1,5 @@
 /*-
- * Copyright (c) 2009-2011, Juniper Networks, Inc.
- * Copyright (c) 2015, EMC Corp.
+ * Copyright (c) 2016 Michal Meloun <mmel@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -12,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY JUNIPER NETWORKS AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL JUNIPER NETWORKS OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -23,35 +22,40 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef _TEGRA_EFUSE_H_
 
-static __inline void
-filemon_lock_read(void)
-{
+enum tegra_revision {
+	TEGRA_REVISION_UNKNOWN = 0,
+	TEGRA_REVISION_A01,
+	TEGRA_REVISION_A02,
+	TEGRA_REVISION_A03,
+	TEGRA_REVISION_A03p,
+	TEGRA_REVISION_A04,
+};
 
-	sx_slock(&access_lock);
-}
+struct tegra_sku_info {
+	u_int chip_id;
+	u_int sku_id;
+	u_int cpu_process_id;
+	u_int cpu_speedo_id;
+	u_int cpu_speedo_value;
+	u_int cpu_iddq_value;
+	u_int soc_process_id;
+	u_int soc_speedo_id;
+	u_int soc_speedo_value;
+	u_int soc_iddq_value;
+	u_int gpu_process_id;
+	u_int gpu_speedo_id;
+	u_int gpu_speedo_value;
+	u_int gpu_iddq_value;
+	enum tegra_revision revision;
+};
 
-static __inline void
-filemon_unlock_read(void)
-{
+extern struct tegra_sku_info tegra_sku_info;
+uint32_t tegra_fuse_read_4(int addr);
 
-	sx_sunlock(&access_lock);
-}
-
-static __inline void
-filemon_lock_write(void)
-{
-
-	sx_xlock(&access_lock);
-}
-
-static __inline void
-filemon_unlock_write(void)
-{
-
-	sx_xunlock(&access_lock);
-}
+#endif /* _TEGRA_EFUSE_H_ */
