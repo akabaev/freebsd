@@ -43,6 +43,8 @@ __FBSDID("$FreeBSD$");
 #include <mips/ingenic/jz4780_regs.h>
 #include <mips/ingenic/jz4780_cpuregs.h>
 
+void jz4780_mpentry(void);
+
 #define JZ4780_MAXCPU	2
 
 void
@@ -144,7 +146,7 @@ platform_start_ap(int cpuid)
 		return (EINVAL);
 
 	/* Figure out address of mpentry in KSEG1 */
-	addr = MIPS_PHYS_TO_KSEG1(MIPS_KSEG0_TO_PHYS(mpentry));
+	addr = MIPS_PHYS_TO_KSEG1(MIPS_KSEG0_TO_PHYS(jz4780_mpentry));
 	KASSERT((addr & ~JZ_REIM_ENTRY_MASK) == 0,
 	    ("Unaligned mpentry"));
 
