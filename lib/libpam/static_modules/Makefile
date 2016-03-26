@@ -65,7 +65,7 @@ CLEANFILES+=	openpam_static.o \
 
 .if empty(_SKIP_BUILD)
 openpam_static_modules.o: openpam_static.o ${STATIC_MODULES}
-	${LD} -o ${.TARGET} -r --whole-archive ${.ALLSRC}
+	${CC} -nostdlib ${CFLAGS} -o ${.TARGET} -r -Wl,--whole-archive ${.ALLSRC}
 
 all: ${STATICOBJS}
 .endif
