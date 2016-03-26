@@ -59,9 +59,33 @@ struct jz4780_uart_softc {
 	clk_t		clk_baud;
 };
 
+static int
+jz4780_bus_attach(struct uart_softc *sc)
+{
+	struct ns8250_softc *ns8250;
+	struct uart_bas *bas;
+	int rv;
+
+	ns8250 = (struct ns8250_softc *)sc;
+	bas = &sc->sc_bas;
+
+	rv = ns8250_bus_attach(sc);
+	if (rv != 0)
+		return (0);
+
+	/* Configure uart to use extra IER_RXTMOUT bit */
+	ns8250->ier_rxbits = IER_RXTMOUT | IER_EMSC | IER_ERLS | IER_ERXRDY;
+	ns8250->ier_mask = ~(ns8250->ier_rxbits);
+	ns8250->ier = uart_getreg(bas, REG_IER) & ns8250->ier_mask;
+	ns8250->ier |= ns8250->ier_rxbits;
+	uart_setreg(bas, REG_IER, ns8250->ier);
+	uart_barrier(bas);
+	return (0);
+}
+
 static kobj_method_t jz4780_uart_methods[] = {
 	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-	KOBJMETHOD(uart_attach,		ns8250_bus_attach),
+	KOBJMETHOD(uart_attach,		jz4780_bus_attach),
 	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
 	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
@@ -108,33 +132,6 @@ jz4780_uart_get_shift(device_t dev)
 	return ((int)shift);
 }
 
-/*
- * It is a bit ugly to communicate this to ns8250 uart driver using
- * kenv, but this is the only way supported right now.
- */
-static void
-jz4780_uart_set_hints(device_t dev)
-{
-	char envkey[sizeof("hint.uart.XX.ier_rxbits")];
-	char valstr[sizeof("0xff")];
-
-	snprintf(envkey, sizeof(envkey), "hint.uart.%d.ier_rxbits",
-	    device_get_unit(dev));
-	if (kern_getenv(envkey) == NULL) {
-		snprintf(valstr, sizeof(valstr), "0x%02x",
-		    IER_RXTMOUT | IER_EMSC | IER_ERLS | IER_ERXRDY);
-		kern_setenv(envkey, valstr);
-	}
-
-	snprintf(envkey, sizeof(envkey), "hint.uart.%d.ier_mask",
-	    device_get_unit(dev));
-	if (kern_getenv(envkey) == NULL) {
-		snprintf(valstr, sizeof(valstr), "0x%02x",
-		    ~(IER_RXTMOUT | IER_EMSC | IER_ERLS | IER_ERXRDY));
-		kern_setenv(envkey, valstr);
-	}
-}
-
 static int
 jz4780_uart_probe(device_t dev)
 {
@@ -177,9 +174,6 @@ jz4780_uart_probe(device_t dev)
 		device_printf(dev, "Cannot determine UART clock frequency: %d\n", rv);
 		return (ENXIO);
 	}
-
-	/* Let ns8250 know about extra FIFO RX timeout interrupt */
-	jz4780_uart_set_hints(dev);
 
 	if (bootverbose)
 		device_printf(dev, "got UART clock: %lld\n", freq);
