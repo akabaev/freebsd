@@ -298,6 +298,17 @@ MACHINE_CPU = v9 ultrasparc ultrasparc3
 
 .if ${MACHINE_CPUARCH} == "mips"
 CFLAGS += -G0
+. if ${MACHINE_ARCH:Mmips*el} != ""
+ACFLAGS += -EL
+AFLAGS += -EL
+CFLAGS += -EL
+LDFLAGS += -EL
+. else
+ACFLAGS += -EB
+AFLAGS += -EB
+CFLAGS += -EB
+LDFLAGS += -EB
+. endif
 .endif
 
 ########## arm
