@@ -29,7 +29,6 @@
 #include <machine/asm.h>
 #include <machine/cpu.h>
 #include <machine/cpuregs.h>
-#include <machine/cache_r4k.h>
 
 #include "assym.s"
 
@@ -54,6 +53,7 @@
 #define CLEAR_STATUS \
 	mtc0	zero, MIPS_COP_0_STATUS
 #endif
+
 GLOBAL(mpentry)
 	CLEAR_STATUS			/* disable interrupts */
 
