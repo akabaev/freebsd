@@ -134,13 +134,6 @@ pic_irq_mask(struct mips_pic_softc *sc, u_int irq)
 	mips_wr_status(mips_rd_status() & ~((1 << irq) << 8));
 }
 
-#ifdef SMP
-static void
-mips_pic_init_secondary(device_t dev)
-{
-}
-#endif /* SMP */
-
 static inline intptr_t
 pic_xref(device_t dev)
 {
