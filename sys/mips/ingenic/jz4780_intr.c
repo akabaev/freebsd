@@ -62,14 +62,20 @@ __FBSDID("$FreeBSD$");
 
 static int jz4780_pic_intr(void *);
 
+struct jz4780_pic_isrc {
+	struct intr_irqsrc isrc;
+	u_int  irq;
+};
+
 struct jz4780_pic_softc {
 	device_t		pic_dev;
 	void *                  pic_intrhand;
 	struct resource *       pic_res[2];
-	struct intr_irqsrc *	pic_irqs[JZ4780_NIRQS];
-	struct mtx		mutex;
+	struct jz4780_pic_isrc  pic_irqs[JZ4780_NIRQS];
 	uint32_t		nirqs;
 };
+
+#define	PIC_INTR_ISRC(sc, irq)	(&(sc)->pic_irqs[(irq)].isrc)
 
 static struct resource_spec jz4780_pic_spec[] = {
 	{ SYS_RES_MEMORY,	0,	RF_ACTIVE },	/* Registers */
@@ -123,6 +129,31 @@ pic_xref(device_t dev)
 }
 
 static int
+jz4780_pic_register_isrcs(struct jz4780_pic_softc *sc)
+{
+	int error;
+	uint32_t irq, i;
+	struct intr_irqsrc *isrc;
+	const char *name;
+
+	name = device_get_nameunit(sc->pic_dev);
+	for (irq = 0; irq < sc->nirqs; irq++) {
+		sc->pic_irqs[irq].irq = irq;
+		isrc = PIC_INTR_ISRC(sc, irq);
+		error = intr_isrc_register(isrc, sc->pic_dev, 0, "%s,%d",
+		    name, irq);
+		if (error != 0) {
+			for (i = 0; i < irq; i++)
+				intr_isrc_deregister(PIC_INTR_ISRC(sc, irq));
+			device_printf(sc->pic_dev, "%s failed", __func__);
+			return (error);
+		}
+	}
+
+	return (0);
+}
+
+static int
 jz4780_pic_attach(device_t dev)
 {
 	struct jz4780_pic_softc *sc;
@@ -137,15 +168,18 @@ jz4780_pic_attach(device_t dev)
 
 	sc->pic_dev = dev;
 
-	/* Initialize mutex */
-	mtx_init(&sc->mutex, "PIC lock", "", MTX_SPIN);
-
 	/* Set the number of interrupts */
 	sc->nirqs = nitems(sc->pic_irqs);
 
 	/* Mask all interrupts */
 	WRITE4(sc, JZ_ICMR0, 0xFFFFFFFF);
 	WRITE4(sc, JZ_ICMR1, 0xFFFFFFFF);
+
+	/* Register the interrupts */
+	if (jz4780_pic_register_isrcs(sc) != 0) {
+		device_printf(dev, "could not register PIC ISRCs\n");
+		goto cleanup;
+	}
 
 	/*
 	 * Now, when everything is initialized, it's right time to
@@ -159,7 +193,7 @@ jz4780_pic_attach(device_t dev)
 	if (bus_setup_intr(dev, sc->pic_res[1], INTR_TYPE_CLK,
 	    jz4780_pic_intr, NULL, sc, &sc->pic_intrhand)) {
 		device_printf(dev, "could not setup irq handler\n");
-		intr_pic_unregister(dev, xref);
+		intr_pic_deregister(dev, xref);
 		goto cleanup;
 	}
 	return (0);
@@ -186,13 +220,12 @@ jz4780_pic_intr(void *arg)
 		i--;
 		intr &= ~(1u << i);
 
-		isrc = sc->pic_irqs[i];
-		if (isrc == NULL) {
+		isrc = PIC_INTR_ISRC(sc, i);
+		if (intr_isrc_dispatch(isrc, curthread->td_intr_frame) != 0) {
 			device_printf(sc->pic_dev, "Stray interrupt %u detected\n", i);
 			pic_irq_mask(sc, i);
 			continue;
 		}
-		intr_irq_dispatch(isrc, td->td_intr_frame);
 	}
 
 	KASSERT(i == 0, ("all interrupts handled"));
@@ -203,13 +236,12 @@ jz4780_pic_intr(void *arg)
 		intr &= ~(1u << i);
 		i += 32;
 
-		isrc = sc->pic_irqs[i];
-		if (isrc == NULL) {
+		isrc = PIC_INTR_ISRC(sc, i);
+		if (intr_isrc_dispatch(isrc, curthread->td_intr_frame) != 0) {
 			device_printf(sc->pic_dev, "Stray interrupt %u detected\n", i);
 			pic_irq_mask(sc, i);
 			continue;
 		}
-		intr_irq_dispatch(isrc, td->td_intr_frame);
 	}
 
 	KASSERT(i == 0, ("all interrupts handled"));
@@ -219,134 +251,55 @@ jz4780_pic_intr(void *arg)
 }
 
 static int
-pic_attach_isrc(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int irq)
+jz4780_pic_map_intr(device_t dev, struct intr_map_data *data,
+        struct intr_irqsrc **isrcp)
 {
-	const char *name;
+#ifdef FDT
+	struct jz4780_pic_softc *sc;
 
-	/*
-	 * 1. The link between ISRC and controller must be set atomically.
-	 * 2. Just do things only once in rare case when consumers
-	 *    of shared interrupt came here at the same moment.
-	 */
-	mtx_lock_spin(&sc->mutex);
-	if (sc->pic_irqs[irq] != NULL) {
-		mtx_unlock_spin(&sc->mutex);
-		return (sc->pic_irqs[irq] == isrc ? 0 : EEXIST);
-	}
-	sc->pic_irqs[irq] = isrc;
-	isrc->isrc_data = irq;
-	mtx_unlock_spin(&sc->mutex);
+	sc = device_get_softc(dev);
 
-	name = device_get_nameunit(sc->pic_dev);
-	intr_irq_set_name(isrc, "%s,i%u", name, irq);
-	return (0);
-}
-
-static int
-pic_detach_isrc(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int irq)
-{
-
-	mtx_lock_spin(&sc->mutex);
-	if (sc->pic_irqs[irq] != isrc) {
-		mtx_unlock_spin(&sc->mutex);
-		return (sc->pic_irqs[irq] == NULL ? 0 : EINVAL);
-	}
-	sc->pic_irqs[irq] = NULL;
-	isrc->isrc_data = 0;
-	mtx_unlock_spin(&sc->mutex);
-
-	intr_irq_set_name(isrc, "%s", "");
-	return (0);
-}
-
-static int
-pic_map_fdt(struct jz4780_pic_softc *sc, struct intr_irqsrc *isrc, u_int *irqp)
-{
-	u_int irq;
-	int error;
-
-	irq = isrc->isrc_cells[0];
-	if (irq >= sc->nirqs)
+	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
+	    data->fdt.ncells != 1 || data->fdt.cells[0] >= sc->nirqs)
 		return (EINVAL);
 
-	error = pic_attach_isrc(sc, isrc, irq);
-	if (error != 0)
-		return (error);
-
-	isrc->isrc_nspc_type = INTR_IRQ_NSPC_PLAIN;
-	isrc->isrc_nspc_num = irq;
-	isrc->isrc_trig = INTR_TRIGGER_CONFORM;
-	isrc->isrc_pol = INTR_POLARITY_CONFORM;
-
-	*irqp = irq;
+	*isrcp = PIC_INTR_ISRC(sc, data->fdt.cells[0]);
 	return (0);
-}
-
-static int
-jz4780_pic_register(device_t dev, struct intr_irqsrc *isrc, boolean_t *is_percpu)
-{
-	struct jz4780_pic_softc *sc = device_get_softc(dev);
-	u_int irq;
-	int error;
-
-	if (isrc->isrc_type == INTR_ISRCT_FDT)
-		error = pic_map_fdt(sc, isrc, &irq);
-	else
-		return (EINVAL);
-
-	if (error == 0)
-		*is_percpu = TRUE;
-	return (error);
+#else
+	return (EINVAL);
+#endif
 }
 
 static void
 jz4780_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
-	if (isrc->isrc_trig == INTR_TRIGGER_CONFORM)
-		isrc->isrc_trig = INTR_TRIGGER_LEVEL;
+	struct jz4780_pic_isrc *pic_isrc;
+
+	pic_isrc = (struct jz4780_pic_isrc *)isrc;
+	pic_irq_unmask(device_get_softc(dev), pic_isrc->irq);
 }
 
 static void
-jz4780_pic_enable_source(device_t dev, struct intr_irqsrc *isrc)
+jz4780_pic_disable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
-	struct jz4780_pic_softc *sc = device_get_softc(dev);
+	struct jz4780_pic_isrc *pic_isrc;
 
-	pic_irq_unmask(sc, isrc->isrc_data);
-}
-
-static void
-jz4780_pic_disable_source(device_t dev, struct intr_irqsrc *isrc)
-{
-	struct jz4780_pic_softc *sc = device_get_softc(dev);
-
-	pic_irq_mask(sc, isrc->isrc_data);
-}
-
-static int
-jz4780_pic_unregister(device_t dev, struct intr_irqsrc *isrc)
-{
-	struct jz4780_pic_softc *sc = device_get_softc(dev);
-
-	return (pic_detach_isrc(sc, isrc, isrc->isrc_data));
+	pic_isrc = (struct jz4780_pic_isrc *)isrc;
+	pic_irq_mask(device_get_softc(dev), pic_isrc->irq);
 }
 
 static void
 jz4780_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
-	jz4780_pic_disable_source(dev, isrc);
+	jz4780_pic_disable_intr(dev, isrc);
 }
 
 static void
 jz4780_pic_post_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
-	jz4780_pic_enable_source(dev, isrc);
-}
-
-static void
-jz4780_pic_post_filter(device_t dev, struct intr_irqsrc *isrc)
-{
+	jz4780_pic_enable_intr(dev, isrc);
 }
 
 static device_method_t jz4780_pic_methods[] = {
@@ -354,14 +307,11 @@ static device_method_t jz4780_pic_methods[] = {
 	DEVMETHOD(device_probe,		jz4780_pic_probe),
 	DEVMETHOD(device_attach,	jz4780_pic_attach),
 	/* Interrupt controller interface */
-	DEVMETHOD(pic_disable_source,	jz4780_pic_disable_source),
 	DEVMETHOD(pic_enable_intr,	jz4780_pic_enable_intr),
-	DEVMETHOD(pic_enable_source,	jz4780_pic_enable_source),
-	DEVMETHOD(pic_post_filter,	jz4780_pic_post_filter),
+	DEVMETHOD(pic_disable_intr,	jz4780_pic_disable_intr),
+	DEVMETHOD(pic_map_intr,		jz4780_pic_map_intr),
 	DEVMETHOD(pic_post_ithread,	jz4780_pic_post_ithread),
 	DEVMETHOD(pic_pre_ithread,	jz4780_pic_pre_ithread),
-	DEVMETHOD(pic_register,		jz4780_pic_register),
-	DEVMETHOD(pic_unregister,	jz4780_pic_unregister),
 	{ 0, 0 }
 };
 

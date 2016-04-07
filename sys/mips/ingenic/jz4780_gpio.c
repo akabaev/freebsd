@@ -69,13 +69,14 @@ enum pin_function {
 };
 
 struct jz4780_gpio_pin {
-	uint32_t pin_caps;
-	uint32_t pin_flags;
-	enum pin_function pin_func;
+	struct intr_irqsrc pin_irqsrc;
 	enum intr_trigger intr_trigger;
 	enum intr_polarity intr_polarity;
+	enum pin_function pin_func;
+	uint32_t pin_caps;
+	uint32_t pin_flags;
+	uint32_t pin_num;
 	char pin_name[GPIOMAXNAME];
-	struct intr_irqsrc *pin_irqsrc;
 };
 
 struct jz4780_gpio_softc {
@@ -283,6 +284,30 @@ jz4780_gpio_pin_probe(struct jz4780_gpio_softc *sc, uint32_t pin)
 }
 
 static int
+jz4780_gpio_register_isrcs(struct jz4780_gpio_softc *sc)
+{
+	int error;
+	uint32_t irq, i;
+	struct intr_irqsrc *isrc;
+	const char *name;
+
+	name = device_get_nameunit(sc->dev);
+	for (irq = 0; irq < JZ4780_GPIO_PINS; irq++) {
+		isrc = &sc->pins[irq].pin_irqsrc;
+		error = intr_isrc_register(isrc, sc->dev, 0, "%s,%d",
+		    name, irq);
+		if (error != 0) {
+			for (i = 0; i < irq; i++)
+				intr_isrc_deregister(&sc->pins[i].pin_irqsrc);
+			device_printf(sc->dev, "%s failed", __func__);
+			return (error);
+		}
+	}
+
+	return (0);
+}
+
+static int
 jz4780_gpio_attach(device_t dev)
 {
 	struct jz4780_gpio_softc *sc = device_get_softc(dev);
@@ -303,13 +328,14 @@ jz4780_gpio_attach(device_t dev)
 	OF_getencprop(node, "ingenic,pull-downs", &pd_pins, sizeof(pd_pins));
 
 	for (i = 0; i < JZ4780_GPIO_PINS; i++) {
+		sc->pins[i].pin_num = i;
 		sc->pins[i].pin_caps |= GPIO_PIN_INPUT | GPIO_PIN_OUTPUT;
 		if (pu_pins & (1 << i))
 			sc->pins[i].pin_caps |= GPIO_PIN_PULLUP;
 		if (pd_pins & (1 << i))
 			sc->pins[i].pin_caps |= GPIO_PIN_PULLDOWN;
-		sc->pins[i].intr_polarity = INTR_POLARITY_LOW;
-		sc->pins[i].intr_trigger = INTR_TRIGGER_LEVEL;
+		sc->pins[i].intr_polarity = INTR_POLARITY_CONFORM;
+		sc->pins[i].intr_trigger = INTR_TRIGGER_CONFORM;
 
 		snprintf(sc->pins[i].pin_name, GPIOMAXNAME - 1, "gpio%c%d",
 		    device_get_unit(dev) + 'a', i);
@@ -317,6 +343,9 @@ jz4780_gpio_attach(device_t dev)
 
 		jz4780_gpio_pin_probe(sc, i);
 	}
+
+	if (jz4780_gpio_register_isrcs(sc) != 0)
+		goto fail;
 
 	if (intr_pic_register(dev, OF_xref_from_node(node)) != 0) {
 		device_printf(dev, "could not register PIC\n");
@@ -333,7 +362,7 @@ jz4780_gpio_attach(device_t dev)
 
 	return (0);
 fail_pic:
-	intr_pic_unregister(dev, OF_xref_from_node(node));
+	intr_pic_deregister(dev, OF_xref_from_node(node));
 fail:
 	if (sc->intrhand != NULL)
 		bus_teardown_intr(dev, sc->res[1], sc->intrhand);
@@ -525,89 +554,161 @@ jz4780_gpio_pin_toggle(device_t dev, uint32_t pin)
 	return (retval);
 }
 
+#ifdef FDT
 static int
-jz4780_gpio_pic_register(device_t dev, struct intr_irqsrc *isrc, boolean_t *is_percpu)
+jz_gpio_map_intr_fdt(device_t dev, struct intr_map_data *data, u_int *irqp,
+        enum intr_polarity *polp, enum intr_trigger *trigp)
 {
 	struct jz4780_gpio_softc *sc;
-	uint32_t pin, tripol;
 
 	sc = device_get_softc(dev);
 
-
-	if (isrc->isrc_ncells != 2) {
-		device_printf(sc->dev, "Invalid #interrupt-cells");
+	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
+	    data->fdt.ncells == 0 || data->fdt.ncells > 2)
 		return (EINVAL);
+
+	*irqp = data->fdt.cells[0];
+	if (data->fdt.ncells == 1) {
+		*trigp = INTR_TRIGGER_CONFORM;
+		*polp = INTR_POLARITY_CONFORM;
+		return (0);
 	}
 
-	pin = isrc->isrc_cells[0];
-	tripol = isrc->isrc_cells[1];
-	if (pin >= JZ4780_GPIO_PINS) {
-		device_printf(sc->dev, "Invalid interrupt number %d", pin);
-		return (EINVAL);
-	}
-	switch (tripol)
+	switch (data->fdt.cells[1])
 	{
 	case IRQ_TYPE_EDGE_RISING:
-		isrc->isrc_trig = INTR_TRIGGER_EDGE;
-		isrc->isrc_pol  = INTR_POLARITY_HIGH;
+		*trigp = INTR_TRIGGER_EDGE;
+		*polp = INTR_POLARITY_HIGH;
 		break;
 	case IRQ_TYPE_EDGE_FALLING:
-		isrc->isrc_trig = INTR_TRIGGER_EDGE;
-		isrc->isrc_pol  = INTR_POLARITY_LOW;
+		*trigp = INTR_TRIGGER_EDGE;
+		*polp = INTR_POLARITY_LOW;
 		break;
 	case IRQ_TYPE_LEVEL_HIGH:
-		isrc->isrc_trig = INTR_TRIGGER_LEVEL;
-		isrc->isrc_pol  = INTR_POLARITY_HIGH;
+		*trigp = INTR_TRIGGER_LEVEL;
+		*polp = INTR_POLARITY_HIGH;
 		break;
 	case IRQ_TYPE_LEVEL_LOW:
-		isrc->isrc_trig = INTR_TRIGGER_LEVEL;
-		isrc->isrc_pol  = INTR_POLARITY_LOW;
+		*trigp = INTR_TRIGGER_LEVEL;
+		*polp = INTR_POLARITY_LOW;
 		break;
 	default:
 		device_printf(sc->dev, "unsupported trigger/polarity 0x%2x\n",
-		    tripol);
+		    data->fdt.cells[1]);
 		return (ENOTSUP);
 	}
-	isrc->isrc_nspc_type = INTR_IRQ_NSPC_PLAIN;
-	isrc->isrc_nspc_num = pin;
 
-	/*
-	 * 1. The link between ISRC and controller must be set atomically.
-	 * 2. Just do things only once in rare case when consumers
-	 *    of shared interrupt came here at the same moment.
-	 */
-	JZ4780_GPIO_LOCK(sc);
-	if (sc->pins[pin].pin_irqsrc != NULL) {
-		JZ4780_GPIO_UNLOCK(sc);
-		return (sc->pins[pin].pin_irqsrc == isrc ? 0 : EEXIST);
+	return (0);
+}
+#endif
+
+static int
+jz_gpio_map_intr(device_t dev, struct intr_map_data *data, u_int *irqp,
+        enum intr_polarity *polp, enum intr_trigger *trigp)
+{
+	struct jz4780_gpio_softc *sc;
+	enum intr_polarity pol;
+	enum intr_trigger trig;
+	u_int irq;
+
+	sc = device_get_softc(dev);
+	switch (data->type) {
+#ifdef FDT
+	case INTR_MAP_DATA_FDT:
+		if (jz_gpio_map_intr_fdt(dev, data, &irq, &pol, &trig) != 0)
+			return (EINVAL);
+		break;
+#endif
+	default:
+		return (EINVAL);
 	}
-	sc->pins[pin].pin_irqsrc = isrc;
-	isrc->isrc_data = pin;
-	JZ4780_GPIO_UNLOCK(sc);
 
-	intr_irq_set_name(isrc, "%s,%u", device_get_nameunit(sc->dev), pin);
+	if (irq >= nitems(sc->pins))
+		return (EINVAL);
+
+	*irqp = irq;
+	if (polp != NULL)
+		*polp = pol;
+	if (trigp != NULL)
+		*trigp = trig;
 	return (0);
 }
 
 static int
-jz4780_gpio_pic_unregister(device_t dev, struct intr_irqsrc *isrc)
+jz4780_gpio_pic_map_intr(device_t dev, struct intr_map_data *data,
+    struct intr_irqsrc **isrcp)
 {
 	struct jz4780_gpio_softc *sc;
+	int retval;
 	u_int irq;
 
+	retval = jz_gpio_map_intr(dev, data, &irq, NULL, NULL);
+	if (retval == 0) {
+		sc = device_get_softc(dev);
+		*isrcp = &sc->pins[irq].pin_irqsrc;
+	}
+	return (retval);
+}
+
+static int
+jz4780_gpio_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
+        struct resource *res, struct intr_map_data *data)
+{
+	struct jz4780_gpio_softc *sc;
+	struct jz4780_gpio_pin *pin;
+	enum intr_polarity pol;
+	enum intr_trigger trig;
+	uint32_t mask, irq;
+
+	if (data == NULL)
+		return (ENOTSUP);
+
+	/* Get config for resource. */
+	if (jz_gpio_map_intr(dev, data, &irq, &pol, &trig))
+		return (EINVAL);
+
+	pin = __containerof(isrc, struct jz4780_gpio_pin, pin_irqsrc);
+	if (isrc != &pin->pin_irqsrc)
+		return (EINVAL);
+
+	/* Compare config if this is not first setup. */
+	if (isrc->isrc_handlers != 0) {
+		if ((pol != INTR_POLARITY_CONFORM && pol != pin->intr_polarity) ||
+		    (trig != INTR_TRIGGER_CONFORM && trig != pin->intr_trigger))
+			return (EINVAL);
+		else
+			return (0);
+	}
+
+	if (pol == INTR_POLARITY_CONFORM)
+		pol = INTR_POLARITY_LOW;	/* just pick some */
+	if (trig == INTR_TRIGGER_CONFORM)
+		trig = INTR_TRIGGER_EDGE;	/* just pick some */
+
 	sc = device_get_softc(dev);
+	mask = 1u << pin->pin_num;
 
 	JZ4780_GPIO_LOCK(sc);
-	irq = isrc->isrc_data;
-	if (sc->pins[irq].pin_irqsrc != isrc) {
-		JZ4780_GPIO_UNLOCK(sc);
-		return (sc->pins[irq].pin_irqsrc == NULL ? 0 : EINVAL);
-	}
-	sc->pins[irq].pin_irqsrc = NULL;
-	isrc->isrc_data = 0;
-	JZ4780_GPIO_UNLOCK(sc);
+	CSR_WRITE_4(sc, JZ_GPIO_MASKS, mask);
+	CSR_WRITE_4(sc, JZ_GPIO_INTS, mask);
 
-	intr_irq_set_name(isrc, "%s", "");
+	if (trig == INTR_TRIGGER_LEVEL)
+		CSR_WRITE_4(sc, JZ_GPIO_PAT1C, mask);
+	else
+		CSR_WRITE_4(sc, JZ_GPIO_PAT1S, mask);
+
+	if (pol == INTR_POLARITY_LOW)
+		CSR_WRITE_4(sc, JZ_GPIO_PAT0C, mask);
+	else
+		CSR_WRITE_4(sc, JZ_GPIO_PAT0S, mask);
+
+	pin->pin_func = JZ_FUNC_INTR;
+	pin->intr_trigger = trig;
+	pin->intr_polarity = pol;
+
+	CSR_WRITE_4(sc, JZ_GPIO_FLAGC, mask);
+	CSR_WRITE_4(sc, JZ_GPIO_MASKC, mask);
+	JZ4780_GPIO_UNLOCK(sc);
 	return (0);
 }
 
@@ -615,75 +716,50 @@ static void
 jz4780_gpio_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
-	uint32_t pin, mask;
+	struct jz4780_gpio_pin *pin;
 
 	sc = device_get_softc(dev);
+	pin = __containerof(isrc, struct jz4780_gpio_pin, pin_irqsrc);
 
-	pin = isrc->isrc_data;
-	mask = 1u << pin;
-
-	JZ4780_GPIO_LOCK(sc);
-	CSR_WRITE_4(sc, JZ_GPIO_MASKS, mask);
-	CSR_WRITE_4(sc, JZ_GPIO_INTS, mask);
-
-	if (isrc->isrc_trig == INTR_TRIGGER_LEVEL)
-		CSR_WRITE_4(sc, JZ_GPIO_PAT1C, mask);
-	else
-		CSR_WRITE_4(sc, JZ_GPIO_PAT1S, mask);
-
-	if (isrc->isrc_pol == INTR_POLARITY_LOW)
-		CSR_WRITE_4(sc, JZ_GPIO_PAT0C, mask);
-	else
-		CSR_WRITE_4(sc, JZ_GPIO_PAT0S, mask);
-
-	sc->pins[pin].pin_func = JZ_FUNC_INTR;
-	sc->pins[pin].intr_trigger = isrc->isrc_trig;
-	sc->pins[pin].intr_polarity = isrc->isrc_pol;
-
-	CSR_WRITE_4(sc, JZ_GPIO_FLAGC, mask);
-	CSR_WRITE_4(sc, JZ_GPIO_MASKC, mask);
-	JZ4780_GPIO_UNLOCK(sc);
+	CSR_WRITE_4(sc, JZ_GPIO_MASKC, 1u << pin->pin_num);
 }
 
 static void
-jz4780_gpio_pic_enable_source(device_t dev, struct intr_irqsrc *isrc)
+jz4780_gpio_pic_disable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
+	struct jz4780_gpio_pin *pin;
 
 	sc = device_get_softc(dev);
-	CSR_WRITE_4(sc, JZ_GPIO_MASKC, 1u << isrc->isrc_data);
-}
+	pin = __containerof(isrc, struct jz4780_gpio_pin, pin_irqsrc);
 
-static void
-jz4780_gpio_pic_disable_source(device_t dev, struct intr_irqsrc *isrc)
-{
-	struct jz4780_gpio_softc *sc;
-
-	sc = device_get_softc(dev);
-	CSR_WRITE_4(sc, JZ_GPIO_MASKS, 1u << isrc->isrc_data);
+	CSR_WRITE_4(sc, JZ_GPIO_MASKS, 1u << pin->pin_num);
 }
 
 static void
 jz4780_gpio_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
-	jz4780_gpio_pic_disable_source(dev, isrc);
+	jz4780_gpio_pic_disable_intr(dev, isrc);
 }
 
 static void
 jz4780_gpio_pic_post_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 
-	jz4780_gpio_pic_enable_source(dev, isrc);
+	jz4780_gpio_pic_enable_intr(dev, isrc);
 }
 
 static void
 jz4780_gpio_pic_post_filter(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct jz4780_gpio_softc *sc;
+	struct jz4780_gpio_pin *pin;
 
 	sc = device_get_softc(dev);
-	CSR_WRITE_4(sc, JZ_GPIO_FLAGC, 1u << isrc->isrc_data);
+	pin = __containerof(isrc, struct jz4780_gpio_pin, pin_irqsrc);
+
+	CSR_WRITE_4(sc, JZ_GPIO_FLAGC, 1u << pin->pin_num);
 }
 
 static int
@@ -698,10 +774,11 @@ jz4780_gpio_intr(void *arg)
 	for (i = 0; interrupts != 0; i++, interrupts >>= 1) {
 		if ((interrupts & 0x1) == 0)
 			continue;
-		if (sc->pins[i].pin_irqsrc)
-			intr_irq_dispatch(sc->pins[i].pin_irqsrc, curthread->td_intr_frame);
-		else
+		if (intr_isrc_dispatch(&sc->pins[i].pin_irqsrc,
+		    curthread->td_intr_frame) != 0) {
 			device_printf(sc->dev, "spurious interrupt %d\n", i);
+			PIC_DISABLE_INTR(sc->dev, &sc->pins[i].pin_irqsrc);
+		}
 	}
 
 	return (FILTER_HANDLED);
@@ -728,14 +805,13 @@ static device_method_t jz4780_gpio_methods[] = {
 	DEVMETHOD(jz4780_gpio_configure_pin, jz4780_gpio_configure_pin),
 
 	/* Interrupt controller interface */
-	DEVMETHOD(pic_disable_source,	jz4780_gpio_pic_disable_source),
+	DEVMETHOD(pic_setup_intr,	jz4780_gpio_pic_setup_intr),
 	DEVMETHOD(pic_enable_intr,	jz4780_gpio_pic_enable_intr),
-	DEVMETHOD(pic_enable_source,	jz4780_gpio_pic_enable_source),
+	DEVMETHOD(pic_disable_intr,	jz4780_gpio_pic_disable_intr),
+	DEVMETHOD(pic_map_intr,		jz4780_gpio_pic_map_intr),
 	DEVMETHOD(pic_post_filter,	jz4780_gpio_pic_post_filter),
 	DEVMETHOD(pic_post_ithread,	jz4780_gpio_pic_post_ithread),
 	DEVMETHOD(pic_pre_ithread,	jz4780_gpio_pic_pre_ithread),
-	DEVMETHOD(pic_register,		jz4780_gpio_pic_register),
-	DEVMETHOD(pic_unregister,	jz4780_gpio_pic_unregister),
 
 	DEVMETHOD_END
 };
