@@ -159,12 +159,13 @@ mips_pic_register_isrcs(struct mips_pic_softc *sc)
 		    irq, irq, 1, RF_ACTIVE, sc->pic_dev);
 		if (sc->pic_irqs[irq].res == NULL) {
 			device_printf(sc->pic_dev,
-			    "%s failed to alloc resource for irq %d",
+			    "%s failed to alloc resource for irq %u",
 			    __func__, irq);
 			return (ENOMEM);
 		}
 		isrc = PIC_INTR_ISRC(sc, irq);
-		error = intr_isrc_register(isrc, sc->pic_dev, 0, "%s", name);
+		error = intr_isrc_register(isrc, sc->pic_dev, 0, "%s%u",
+		    irq < NSOFT_IRQS ? "sint" : "int", irq);
 		if (error != 0) {
 			for (i = 0; i < irq; i++) {
 				intr_isrc_deregister(PIC_INTR_ISRC(sc, i));
