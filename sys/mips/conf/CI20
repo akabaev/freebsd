@@ -9,6 +9,12 @@ options		FDT
 options		FDT_DTB_STATIC
 makeoptions	FDT_DTS_FILE=ci20.dts
 
+#options		KTR
+#options		KTR_CPUMASK=0x3
+#options		KTR_MASK=(KTR_GEN)
+#options		KTR_COMPILE=(KTR_GEN)
+#options		KTR_VERBOSE
+
 options 	BOOTP
 options 	BOOTP_NFSROOT
 options 	BOOTP_NFSV3
