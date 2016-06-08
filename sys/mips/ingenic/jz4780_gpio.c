@@ -560,21 +560,23 @@ jz_gpio_map_intr_fdt(device_t dev, struct intr_map_data *data, u_int *irqp,
         enum intr_polarity *polp, enum intr_trigger *trigp)
 {
 	struct jz4780_gpio_softc *sc;
+	struct intr_map_data_fdt *daf;
 
 	sc = device_get_softc(dev);
+	daf = (struct intr_map_data_fdt *)data;
 
 	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
-	    data->fdt.ncells == 0 || data->fdt.ncells > 2)
+	    daf->ncells == 0 || daf->ncells > 2)
 		return (EINVAL);
 
-	*irqp = data->fdt.cells[0];
-	if (data->fdt.ncells == 1) {
+	*irqp = daf->cells[0];
+	if (daf->ncells == 1) {
 		*trigp = INTR_TRIGGER_CONFORM;
 		*polp = INTR_POLARITY_CONFORM;
 		return (0);
 	}
 
-	switch (data->fdt.cells[1])
+	switch (daf->cells[1])
 	{
 	case IRQ_TYPE_EDGE_RISING:
 		*trigp = INTR_TRIGGER_EDGE;
@@ -594,7 +596,7 @@ jz_gpio_map_intr_fdt(device_t dev, struct intr_map_data *data, u_int *irqp,
 		break;
 	default:
 		device_printf(sc->dev, "unsupported trigger/polarity 0x%2x\n",
-		    data->fdt.cells[1]);
+		    daf->cells[1]);
 		return (ENOTSUP);
 	}
 

@@ -90,12 +90,12 @@ geli_taste(int read_func(void *vdev, void *priv, off_t off, void *buf,
 		return (error);
 	}
 
-	if ((md.md_flags & G_ELI_FLAG_ONETIME)) {
-		/* Swap device, skip it. */
+	if (!(md.md_flags & G_ELI_FLAG_GELIBOOT)) {
+		/* The GELIBOOT feature is not activated */
 		return (1);
 	}
-	if (!(md.md_flags & G_ELI_FLAG_BOOT)) {
-		/* Disk is not GELI boot device, skip it. */
+	if ((md.md_flags & G_ELI_FLAG_ONETIME)) {
+		/* Swap device, skip it. */
 		return (1);
 	}
 	if (md.md_iterations < 0) {
@@ -155,7 +155,7 @@ geli_attach(struct dsk *dskp, const char *passphrase)
 			g_eli_crypto_hmac_update(&ctx, passphrase,
 			    strlen(passphrase));
 		} else if (geli_e->md.md_iterations > 0) {
-			printf("Calculating GELI Decryption Key disk%dp%d @ %lu"
+			printf("Calculating GELI Decryption Key disk%dp%d @ %d"
 			    " iterations...\n", dskp->unit,
 			    (dskp->slice > 0 ? dskp->slice : dskp->part),
 			    geli_e->md.md_iterations);

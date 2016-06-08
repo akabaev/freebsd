@@ -189,6 +189,7 @@ struct iterator_control {
 
 struct sctp_net_route {
 	sctp_rtentry_t *ro_rt;
+	struct llentry *ro_lle;
 	char *ro_prepend;
 	uint16_t ro_plen;
 	uint16_t ro_flags;
@@ -452,11 +453,6 @@ struct sctp_tmit_chunk {
 	uint8_t window_probe;
 };
 
-/*
- * The first part of this structure MUST be the entire sinfo structure. Maybe
- * I should have made it a sub structure... we can circle back later and do
- * that if we want.
- */
 struct sctp_queued_to_read {	/* sinfo structure Pluse more */
 	uint16_t sinfo_stream;	/* off the wire */
 	uint32_t sinfo_ssn;	/* off the wire */
@@ -971,7 +967,7 @@ struct sctp_association {
 	uint32_t sat_t3_recovery_tsn;
 	uint32_t tsn_last_delivered;
 	/*
-	 * For the pd-api we should re-write this a bit more efficent. We
+	 * For the pd-api we should re-write this a bit more efficient. We
 	 * could have multiple sctp_queued_to_read's that we are building at
 	 * once. Now we only do this when we get ready to deliver to the
 	 * socket buffer. Note that we depend on the fact that the struct is

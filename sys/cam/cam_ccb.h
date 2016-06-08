@@ -231,6 +231,8 @@ typedef enum {
 				/* Notify Host Target driver of event */
 	XPT_NOTIFY_ACKNOWLEDGE	= 0x37 | XPT_FC_QUEUED | XPT_FC_USER_CCB,
 				/* Acknowledgement of event */
+	XPT_REPROBE_LUN		= 0x38 | XPT_FC_QUEUED | XPT_FC_USER_CCB,
+				/* Query device capacity and notify GEOM */
 
 /* Vendor Unique codes: 0x80->0x8F */
 	XPT_VUNIQUE		= 0x80
@@ -581,6 +583,7 @@ typedef enum {
 } pi_tmflag;
 
 typedef enum {
+	PIM_ATA_EXT	= 0x200,/* ATA requests can understand ata_ext requests */
 	PIM_EXTLUNS	= 0x100,/* 64bit extended LUNs supported */
 	PIM_SCANHILO	= 0x80,	/* Bus scans from high ID to low ID */
 	PIM_NOREMOVE	= 0x40,	/* Removeable devices not included in scan */
@@ -743,15 +746,10 @@ struct ccb_ataio {
 	u_int8_t   *data_ptr;		/* Ptr to the data buf/SG list */
 	u_int32_t  dxfer_len;		/* Data transfer length */
 	u_int32_t  resid;		/* Transfer residual length: 2's comp */
-	u_int8_t   tag_action;		/* What to do for tag queueing */
-	/*
-	 * The tag action should be either the define below (to send a
-	 * non-tagged transaction) or one of the defined scsi tag messages
-	 * from scsi_message.h.
-	 */
-#define		CAM_TAG_ACTION_NONE	0x00
-	u_int	   tag_id;		/* tag id from initator (target mode) */
-	u_int	   init_id;		/* initiator id of who selected */
+	u_int8_t   ata_flags;		/* Flags for the rest of the buffer */
+#define ATA_FLAG_AUX 0x1
+	uint32_t   aux;
+	uint32_t   unused;
 };
 
 struct ccb_accept_tio {
@@ -1089,7 +1087,17 @@ struct ccb_notify_acknowledge {
 	u_int     tag_id;		/* Tag for immediate notify */
 	u_int     seq_id;		/* Tar for target of notify */
 	u_int     initiator_id;		/* Initiator Identifier */
-	u_int     arg;			/* Function specific */
+	u_int     arg;			/* Response information */
+	/*
+	 * Lower byte of arg is one of RESPONSE CODE values defined below
+	 * (subset of response codes from SPL-4 and FCP-4 specifications),
+	 * upper 3 bytes is code-specific ADDITIONAL RESPONSE INFORMATION.
+	 */
+#define	CAM_RSP_TMF_COMPLETE		0x00
+#define	CAM_RSP_TMF_REJECTED		0x04
+#define	CAM_RSP_TMF_FAILED		0x05
+#define	CAM_RSP_TMF_SUCCEEDED		0x08
+#define	CAM_RSP_TMF_INCORRECT_LUN	0x09
 };
 
 /* HBA engine structures. */
@@ -1222,6 +1230,10 @@ union ccb {
 	struct	ccb_async		casync;
 };
 
+#define CCB_CLEAR_ALL_EXCEPT_HDR(ccbp)			\
+	bzero((char *)(ccbp) + sizeof((ccbp)->ccb_h),	\
+	    sizeof(*(ccbp)) - sizeof((ccbp)->ccb_h))
+
 __BEGIN_DECLS
 static __inline void
 cam_fill_csio(struct ccb_scsiio *csio, u_int32_t retries,
@@ -1297,7 +1309,7 @@ cam_fill_ctio(struct ccb_scsiio *csio, u_int32_t retries,
 static __inline void
 cam_fill_ataio(struct ccb_ataio *ataio, u_int32_t retries,
 	      void (*cbfcnp)(struct cam_periph *, union ccb *),
-	      u_int32_t flags, u_int tag_action,
+	      u_int32_t flags, u_int tag_action __unused,
 	      u_int8_t *data_ptr, u_int32_t dxfer_len,
 	      u_int32_t timeout)
 {
@@ -1308,7 +1320,7 @@ cam_fill_ataio(struct ccb_ataio *ataio, u_int32_t retries,
 	ataio->ccb_h.timeout = timeout;
 	ataio->data_ptr = data_ptr;
 	ataio->dxfer_len = dxfer_len;
-	ataio->tag_action = tag_action;
+	ataio->ata_flags = 0;
 }
 
 static __inline void

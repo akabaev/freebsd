@@ -96,6 +96,7 @@ struct urtwn_fw_info {
 struct urtwn_node {
 	struct ieee80211_node	ni;	/* must be the first */
 	uint8_t			id;
+	int			last_rssi;
 };
 #define URTWN_NODE(ni)	((struct urtwn_node *)(ni))
 
@@ -114,21 +115,6 @@ struct urtwn_vap {
 				    int, int);
 };
 #define	URTWN_VAP(vap)	((struct urtwn_vap *)(vap))
-
-struct urtwn_host_cmd {
-	void	(*cb)(struct urtwn_softc *, void *);
-	uint8_t	data[256];
-};
-
-struct urtwn_cmd_newstate {
-	enum ieee80211_state	state;
-	int			arg;
-};
-
-struct urtwn_cmd_key {
-	struct ieee80211_key	key;
-	uint16_t		associd;
-};
 
 enum {
 	URTWN_BULK_RX,
@@ -190,6 +176,8 @@ struct urtwn_softc {
 	int				nrxchains;
 	int				ledlink;
 	int				sc_txtimer;
+
+	int				last_rssi;
 
 	int				fwcur;
 	struct urtwn_data		sc_rx[URTWN_RX_LIST_COUNT];

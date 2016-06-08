@@ -84,9 +84,11 @@ static void mtk_usb_phy_mt7621_init(device_t);
 static void mtk_usb_phy_mt7628_init(device_t);
 
 static struct ofw_compat_data compat_data[] = {
-	{ "ralink,mt7620a-usbphy",	MTK_SOC_MT7620A },
+	{ "ralink,mt7620-usbphy",	MTK_SOC_MT7620A },
+	{ "mediatek,mt7620-usbphy",	MTK_SOC_MT7620A },
 	{ "ralink,mt7628an-usbphy",	MTK_SOC_MT7628 },
-	{ "ralink,rt3xxx-usbphy",	MTK_SOC_RT3352 },
+	{ "ralink,rt3352-usbphy",	MTK_SOC_RT3352 },
+	{ "ralink,rt3050-usbphy",	MTK_SOC_RT3050 },
 	{ NULL,				MTK_SOC_UNKNOWN }
 };
 
@@ -206,6 +208,11 @@ mtk_usb_phy_detach(device_t dev)
 	return (0);
 }
 
+/*
+ * Things currently seem to work a lot better without slew rate calibration
+ * both on MT7621 and MT7688, so we leave it out for now.
+ */
+#ifdef notyet
 static void
 mtk_usb_phy_slew_rate_calibration(struct mtk_usb_phy_softc *sc)
 {
@@ -250,10 +257,12 @@ mtk_usb_phy_slew_rate_calibration(struct mtk_usb_phy_softc *sc)
 		USB_PHY_BARRIER(sc);
 	}
 }
+#endif
 
 static void
 mtk_usb_phy_mt7621_init(device_t dev)
 {
+#ifdef notyet
 	struct mtk_usb_phy_softc *sc = device_get_softc(dev);
 
 	/* Slew rate calibration only, but for 2 ports */
@@ -261,6 +270,7 @@ mtk_usb_phy_mt7621_init(device_t dev)
 
 	sc->u2_base = MT7621_U2_BASE_P1;
 	mtk_usb_phy_slew_rate_calibration(sc);
+#endif
 }
 
 static void
@@ -286,8 +296,10 @@ mtk_usb_phy_mt7628_init(device_t dev)
 	USB_PHY_WRITE_U2(sc, U2_PHY_DTM0, 0x02000000);
 	USB_PHY_BARRIER(sc);
 
+#ifdef notyet
 	/* Slew rate calibration */
-	//mtk_usb_phy_slew_rate_calibration(sc);
+	mtk_usb_phy_slew_rate_calibration(sc);
+#endif
 }
 
 static device_method_t mtk_usb_phy_methods[] = {

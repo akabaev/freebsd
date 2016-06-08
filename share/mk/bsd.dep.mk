@@ -54,6 +54,9 @@ HTAGSFLAGS?=
 .MAKE.DEPENDFILE= ${DEPENDFILE}
 .endif
 CLEANDEPENDFILES+=	${DEPENDFILE} ${DEPENDFILE}.*
+.if ${MK_META_MODE} == "yes"
+CLEANDEPENDFILES+=	*.meta
+.endif
 
 # Keep `tags' here, before SRCS are mangled below for `depend'.
 .if !target(tags) && defined(SRCS) && !defined(NO_TAGS)
@@ -104,6 +107,7 @@ SRCS:=	${SRCS:S/${_YSRC}/${_YC}/}
 CLEANFILES+= ${_YC}
 .if !empty(YFLAGS:M-d) && !empty(SRCS:My.tab.h)
 .ORDER: ${_YC} y.tab.h
+y.tab.h: .NOMETA
 ${_YC} y.tab.h: ${_YSRC}
 	${YACC} ${YFLAGS} ${.ALLSRC}
 	cp y.tab.c ${_YC}
@@ -111,6 +115,7 @@ CLEANFILES+= y.tab.c y.tab.h
 .elif !empty(YFLAGS:M-d)
 .for _YH in ${_YC:R}.h
 .ORDER: ${_YC} ${_YH}
+${_YH}: .NOMETA
 ${_YC} ${_YH}: ${_YSRC}
 	${YACC} ${YFLAGS} -o ${_YC} ${.ALLSRC}
 SRCS+=	${_YH}
@@ -174,7 +179,7 @@ DEPEND_CFLAGS+=	-MT${.TARGET}
 .if defined(.PARSEDIR)
 # Only add in DEPEND_CFLAGS for CFLAGS on files we expect from DEPENDOBJS
 # as those are the only ones we will include.
-DEPEND_CFLAGS_CONDITION= !empty(DEPENDOBJS:M${.TARGET:${DEPEND_FILTER}})
+DEPEND_CFLAGS_CONDITION= "${DEPENDOBJS:M${.TARGET:${DEPEND_FILTER}}}" != ""
 CFLAGS+=	${${DEPEND_CFLAGS_CONDITION}:?${DEPEND_CFLAGS}:}
 .else
 CFLAGS+=	${DEPEND_CFLAGS}
@@ -213,6 +218,12 @@ afterdepend: beforedepend
     (!defined(_meta_filemon) && !exists(${.OBJDIR}/${DEPENDFILE}.${__obj}))
 ${__obj}: ${OBJS_DEPEND_GUESS}
 ${__obj}: ${OBJS_DEPEND_GUESS.${__obj}}
+.elif defined(_meta_filemon)
+# For meta mode we still need to know which file to depend on to avoid
+# ambiguous suffix transformation rules from .PATH.  Meta mode does not
+# use .depend files.  We really only need source files, not headers.
+${__obj}: ${OBJS_DEPEND_GUESS:N*.h}
+${__obj}: ${OBJS_DEPEND_GUESS.${__obj}:N*.h}
 .endif
 .endfor
 
@@ -235,7 +246,9 @@ DPSRCS+= ${SRCS}
 # beforedepend/_EXTRADEPEND/afterdepend.  The target is kept
 # to allow 'make depend' to generate files.
 ${DEPENDFILE}: ${DPSRCS}
-.if exists(${.OBJDIR}/${DEPENDFILE})
+.if exists(${.OBJDIR}/${DEPENDFILE}) || \
+    ((commands(beforedepend) || commands(_EXTRADEPEND) || \
+    commands(afterdepend)) && !empty(.MAKE.MODE:Mmeta))
 	rm -f ${DEPENDFILE}
 .endif
 .if target(_EXTRADEPEND)

@@ -148,11 +148,10 @@ static int
 mips_pic_register_isrcs(struct mips_pic_softc *sc)
 {
 	int error;
-	uint32_t irq, i;
+	uint32_t irq, i, tmpirq;
 	struct intr_irqsrc *isrc;
-	const char *name;
+	char *name;
 
-	name = device_get_nameunit(sc->pic_dev);
 	for (irq = 0; irq < sc->nirqs; irq++) {
 		sc->pic_irqs[irq].irq = irq;
 		sc->pic_irqs[irq].res = rman_reserve_resource(&sc->pic_irq_rman,
@@ -164,8 +163,15 @@ mips_pic_register_isrcs(struct mips_pic_softc *sc)
 			return (ENOMEM);
 		}
 		isrc = PIC_INTR_ISRC(sc, irq);
+		if (irq < NSOFT_IRQS) {
+			name = "sint";
+			tmpirq = irq;
+		} else {
+			name = "int";
+			tmpirq = irq - NSOFT_IRQS;
+		}
 		error = intr_isrc_register(isrc, sc->pic_dev, 0, "%s%u",
-		    irq < NSOFT_IRQS ? "sint" : "int", irq);
+		    name, tmpirq);
 		if (error != 0) {
 			for (i = 0; i < irq; i++) {
 				intr_isrc_deregister(PIC_INTR_ISRC(sc, i));
@@ -217,7 +223,7 @@ mips_pic_attach(device_t dev)
 	 * Now, when everything is initialized, it's right time to
 	 * register interrupt controller to interrupt framefork.
 	 */
-	if (intr_pic_register(dev, xref) != 0) {
+	if (intr_pic_register(dev, xref) == NULL) {
 		device_printf(dev, "could not register PIC\n");
 		goto cleanup;
 	}
@@ -299,18 +305,22 @@ mips_pic_map_intr(device_t dev, struct intr_map_data *data,
     struct intr_irqsrc **isrcp)
 {
 #ifdef FDT
+	struct intr_map_data_fdt *daf;
 	struct mips_pic_softc *sc;
 
-	sc = device_get_softc(dev);
+	if (data->type != INTR_MAP_DATA_FDT)
+		return (ENOTSUP);
 
-	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
-	    data->fdt.ncells != 1 || data->fdt.cells[0] >= sc->nirqs)
+	sc = device_get_softc(dev);
+	daf = (struct intr_map_data_fdt *)data;
+
+	if (daf->ncells != 1 || daf->cells[0] >= sc->nirqs)
 		return (EINVAL);
 
-	*isrcp = PIC_INTR_ISRC(sc, data->fdt.cells[0]);
+	*isrcp = PIC_INTR_ISRC(sc, daf->cells[0]);
 	return (0);
 #else
-	return (EINVAL);
+	return (ENOTSUP);
 #endif
 }
 

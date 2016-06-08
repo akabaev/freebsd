@@ -256,14 +256,16 @@ jz4780_pic_map_intr(device_t dev, struct intr_map_data *data,
 {
 #ifdef FDT
 	struct jz4780_pic_softc *sc;
+	struct intr_map_data_fdt *daf;
 
 	sc = device_get_softc(dev);
+	daf = (struct intr_map_data_fdt *)data;
 
 	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
-	    data->fdt.ncells != 1 || data->fdt.cells[0] >= sc->nirqs)
+	    daf->ncells != 1 || daf->cells[0] >= sc->nirqs)
 		return (EINVAL);
 
-	*isrcp = PIC_INTR_ISRC(sc, data->fdt.cells[0]);
+	*isrcp = PIC_INTR_ISRC(sc, daf->cells[0]);
 	return (0);
 #else
 	return (EINVAL);
