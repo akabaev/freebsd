@@ -347,7 +347,7 @@ jz4780_gpio_attach(device_t dev)
 	if (jz4780_gpio_register_isrcs(sc) != 0)
 		goto fail;
 
-	if (intr_pic_register(dev, OF_xref_from_node(node)) != 0) {
+	if (intr_pic_register(dev, OF_xref_from_node(node)) == NULL) {
 		device_printf(dev, "could not register PIC\n");
 		goto fail;
 	}

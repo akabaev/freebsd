@@ -157,7 +157,9 @@ static int
 jz4780_pic_attach(device_t dev)
 {
 	struct jz4780_pic_softc *sc;
-	intptr_t xref = pic_xref(dev);
+	intptr_t xref;
+
+	xref = pic_xref(dev);
 
 	sc = device_get_softc(dev);
 
@@ -185,7 +187,7 @@ jz4780_pic_attach(device_t dev)
 	 * Now, when everything is initialized, it's right time to
 	 * register interrupt controller to interrupt framefork.
 	 */
-	if (intr_pic_register(dev, xref) != 0) {
+	if (intr_pic_register(dev, xref) == NULL) {
 		device_printf(dev, "could not register PIC\n");
 		goto cleanup;
 	}
@@ -196,10 +198,12 @@ jz4780_pic_attach(device_t dev)
 		intr_pic_deregister(dev, xref);
 		goto cleanup;
 	}
+
 	return (0);
 
 cleanup:
 	bus_release_resources(dev, jz4780_pic_spec, sc->pic_res);
+
 	return(ENXIO);
 }
 
