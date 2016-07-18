@@ -73,7 +73,7 @@ jz4780_dwc_otg_clk_enable(device_t dev)
 	sc = device_get_softc(dev);
 
 	/* Configure and enable phy clock */
-	err = clk_get_by_ofw_name(dev, "otg_phy", &sc->phy_clk);
+	err = clk_get_by_ofw_name(dev, 0, "otg_phy", &sc->phy_clk);
 	if (err != 0) {
 		device_printf(dev, "unable to lookup %s clock\n", "otg_phy");
 		return (err);
@@ -91,7 +91,7 @@ jz4780_dwc_otg_clk_enable(device_t dev)
 	}
 
 	/* Configure and enable otg1 clock */
-	err = clk_get_by_ofw_name(dev, "otg1", &sc->otg_clk);
+	err = clk_get_by_ofw_name(dev, 0, "otg1", &sc->otg_clk);
 	if (err != 0) {
 		device_printf(dev, "unable to lookup %s clock\n", "otg1");
 		return (err);

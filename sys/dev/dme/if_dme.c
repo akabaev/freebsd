@@ -784,7 +784,7 @@ dme_attach(device_t dev)
 	/*
 	 * Power the chip up, if necessary
 	 */
-	error = regulator_get_by_ofw_property(dev, "vcc-supply", &sc->dme_vcc_regulator);
+	error = regulator_get_by_ofw_property(dev, 0, "vcc-supply", &sc->dme_vcc_regulator);
 	if (error == 0) {
 		error = regulator_enable(sc->dme_vcc_regulator);
 		if (error != 0) {

@@ -126,7 +126,7 @@ jz4780_ehci_clk_enable(device_t dev)
 
 	sc = device_get_softc(dev);
 
-	err = clk_get_by_ofw_index(dev, 0, &sc->clk);
+	err = clk_get_by_ofw_index(dev, 0, 0, &sc->clk);
 	if (err != 0) {
 		device_printf(dev, "unable to lookup device clock\n");
 		return (err);

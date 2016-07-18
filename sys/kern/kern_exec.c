@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/pioctl.h>
+#include <sys/ptrace.h>
 #include <sys/namei.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
@@ -832,7 +833,7 @@ interpret:
 	 * Notify others that we exec'd, and clear the P_INEXEC flag
 	 * as we're now a bona fide freshly-execed process.
 	 */
-	KNOTE_LOCKED(&p->p_klist, NOTE_EXEC);
+	KNOTE_LOCKED(p->p_klist, NOTE_EXEC);
 	p->p_flag &= ~P_INEXEC;
 
 	/* clear "fork but no exec" flag, as we _are_ execing */
@@ -903,7 +904,8 @@ exec_fail_dealloc:
 
 	if (error == 0) {
 		PROC_LOCK(p);
-		td->td_dbgflags |= TDB_EXEC;
+		if (p->p_ptevents & PTRACE_EXEC)
+			td->td_dbgflags |= TDB_EXEC;
 		PROC_UNLOCK(p);
 
 		/*

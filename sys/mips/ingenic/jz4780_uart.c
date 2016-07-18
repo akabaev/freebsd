@@ -149,7 +149,7 @@ jz4780_uart_probe(device_t dev)
 		return (ENXIO);
 
 	/* Figure out clock setup */
-	rv = clk_get_by_ofw_name(dev, "module", &sc->clk_mod);
+	rv = clk_get_by_ofw_name(dev, 0, "module", &sc->clk_mod);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get UART clock: %d\n", rv);
 		return (ENXIO);
@@ -159,7 +159,7 @@ jz4780_uart_probe(device_t dev)
 		device_printf(dev, "Cannot enable UART clock: %d\n", rv);
 		return (ENXIO);
 	}
-	rv = clk_get_by_ofw_name(dev, "baud", &sc->clk_baud);
+	rv = clk_get_by_ofw_name(dev, 0, "baud", &sc->clk_baud);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get UART clock: %d\n", rv);
 		return (ENXIO);

@@ -262,7 +262,7 @@ jz4780_nemc_attach(device_t dev)
 		goto error;
 
 	/* Figure our underlying clock rate. */
-	if (clk_get_by_ofw_index(dev, 0, &sc->clk) != 0) {
+	if (clk_get_by_ofw_index(dev, 0, 0, &sc->clk) != 0) {
 		device_printf(dev, "could not lookup device clock\n");
 		goto error;
 	}

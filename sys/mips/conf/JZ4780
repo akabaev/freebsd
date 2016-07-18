@@ -26,6 +26,8 @@ options 	DDB
 options 	KDB
 options		BREAK_TO_DEBUGGER
 
+options		COMPAT_FREEBSD10
+
 options 	SCHED_4BSD		#4BSD scheduler
 options 	INET			#InterNETworking
 options 	NFSCL			#Network Filesystem Client

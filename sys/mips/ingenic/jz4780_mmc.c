@@ -264,7 +264,7 @@ jz4780_mmc_enable_clock(struct jz4780_mmc_softc *sc)
 {
 	int err;
 
-	err = clk_get_by_ofw_name(sc->sc_dev, "mmc", &sc->sc_clk);
+	err = clk_get_by_ofw_name(sc->sc_dev, 0, "mmc", &sc->sc_clk);
 	if (err == 0)
 		err = clk_enable(sc->sc_clk);
 	if (err == 0)
