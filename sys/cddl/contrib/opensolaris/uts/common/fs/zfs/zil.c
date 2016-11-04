@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2015 by Delphix. All rights reserved.
  * Copyright (c) 2011, 2014 by Delphix. All rights reserved.
  * Copyright (c) 2014 Integros [integros.com]
  */
@@ -88,8 +89,6 @@ SYSCTL_INT(_vfs_zfs_trim, OID_AUTO, enabled, CTLFLAG_RDTUN, &zfs_trim_enabled, 0
     "Enable ZFS TRIM");
 
 static kmem_cache_t *zil_lwb_cache;
-
-static void zil_async_to_sync(zilog_t *zilog, uint64_t foid);
 
 #define	LWB_EMPTY(lwb) ((BP_GET_LSIZE(&lwb->lwb_blk) - \
     sizeof (zil_chain_t)) == (lwb->lwb_sz - lwb->lwb_nused))
@@ -253,7 +252,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 			}
 		}
 
-		VERIFY(arc_buf_remove_ref(abuf, &abuf));
+		arc_buf_destroy(abuf, &abuf);
 	}
 
 	return (error);
@@ -290,7 +289,7 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	if (error == 0) {
 		if (wbuf != NULL)
 			bcopy(abuf->b_data, wbuf, arc_buf_size(abuf));
-		(void) arc_buf_remove_ref(abuf, &abuf);
+		arc_buf_destroy(abuf, &abuf);
 	}
 
 	return (error);
@@ -923,6 +922,8 @@ uint64_t zil_block_buckets[] = {
  * Limit checking is disabled by setting zil_slog_limit to UINT64_MAX.
  */
 uint64_t zil_slog_limit = 1024 * 1024;
+SYSCTL_QUAD(_vfs_zfs, OID_AUTO, zil_slog_limit, CTLFLAG_RWTUN,
+    &zil_slog_limit, 0, "Maximal commit size to use SLOG");
 #define	USE_SLOG(zilog) (((zilog)->zl_logbias == ZFS_LOGBIAS_LATENCY) && \
 	(((zilog)->zl_cur_used < zil_slog_limit) || \
 	((zilog)->zl_itx_list_sz < (zil_slog_limit << 1))))
@@ -1141,6 +1142,11 @@ zil_itx_create(uint64_t txtype, size_t lrsize)
 
 	lrsize = P2ROUNDUP_TYPED(lrsize, sizeof (uint64_t), size_t);
 
+#ifdef __FreeBSD__
+	if (offsetof(itx_t, itx_lr) + lrsize > PAGE_SIZE)
+		itx = zio_buf_alloc(offsetof(itx_t, itx_lr) + lrsize);
+	else
+#endif
 	itx = kmem_alloc(offsetof(itx_t, itx_lr) + lrsize, KM_SLEEP);
 	itx->itx_lr.lrc_txtype = txtype;
 	itx->itx_lr.lrc_reclen = lrsize;
@@ -1154,6 +1160,11 @@ zil_itx_create(uint64_t txtype, size_t lrsize)
 void
 zil_itx_destroy(itx_t *itx)
 {
+#ifdef __FreeBSD__
+	if (offsetof(itx_t, itx_lr) + itx->itx_lr.lrc_reclen > PAGE_SIZE)
+		zio_buf_free(itx, offsetof(itx_t, itx_lr) + itx->itx_lr.lrc_reclen);
+	else
+#endif
 	kmem_free(itx, offsetof(itx_t, itx_lr) + itx->itx_lr.lrc_reclen);
 }
 
@@ -1173,8 +1184,7 @@ zil_itxg_clean(itxs_t *itxs)
 	list = &itxs->i_sync_list;
 	while ((itx = list_head(list)) != NULL) {
 		list_remove(list, itx);
-		kmem_free(itx, offsetof(itx_t, itx_lr) +
-		    itx->itx_lr.lrc_reclen);
+		zil_itx_destroy(itx);
 	}
 
 	cookie = NULL;
@@ -1183,8 +1193,7 @@ zil_itxg_clean(itxs_t *itxs)
 		list = &ian->ia_list;
 		while ((itx = list_head(list)) != NULL) {
 			list_remove(list, itx);
-			kmem_free(itx, offsetof(itx_t, itx_lr) +
-			    itx->itx_lr.lrc_reclen);
+			zil_itx_destroy(itx);
 		}
 		list_destroy(list);
 		kmem_free(ian, sizeof (itx_async_node_t));
@@ -1249,8 +1258,7 @@ zil_remove_async(zilog_t *zilog, uint64_t oid)
 	}
 	while ((itx = list_head(&clean_list)) != NULL) {
 		list_remove(&clean_list, itx);
-		kmem_free(itx, offsetof(itx_t, itx_lr) +
-		    itx->itx_lr.lrc_reclen);
+		zil_itx_destroy(itx);
 	}
 	list_destroy(&clean_list);
 }
@@ -1411,7 +1419,7 @@ zil_get_commit_list(zilog_t *zilog)
 /*
  * Move the async itxs for a specified object to commit into sync lists.
  */
-static void
+void
 zil_async_to_sync(zilog_t *zilog, uint64_t foid)
 {
 	uint64_t otxg, txg;
@@ -1500,8 +1508,7 @@ zil_commit_writer(zilog_t *zilog)
 		if (txg > spa_last_synced_txg(spa) || txg > spa_freeze_txg(spa))
 			lwb = zil_lwb_commit(zilog, itx, lwb);
 		list_remove(&zilog->zl_itx_commit_list, itx);
-		kmem_free(itx, offsetof(itx_t, itx_lr)
-		    + itx->itx_lr.lrc_reclen);
+		zil_itx_destroy(itx);
 	}
 	DTRACE_PROBE1(zil__cw2, zilog_t *, zilog);
 
@@ -1970,7 +1977,7 @@ typedef struct zil_replay_arg {
 static int
 zil_replay_error(zilog_t *zilog, lr_t *lr, int error)
 {
-	char name[MAXNAMELEN];
+	char name[ZFS_MAX_DATASET_NAME_LEN];
 
 	zilog->zl_replaying_seq--;	/* didn't actually replay this one */
 

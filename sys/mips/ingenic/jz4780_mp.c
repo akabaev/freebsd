@@ -76,10 +76,17 @@ platform_processor_id(void)
 }
 
 int
-platform_ipi_intrnum(void)
+platform_ipi_hardintr_num(void)
 {
 
 	return (1);
+}
+
+int
+platform_ipi_softintr_num(void)
+{
+
+	return (-1);
 }
 
 void
@@ -100,7 +107,7 @@ platform_init_ap(int cpuid)
 	/*
 	 * Unmask the ipi interrupts.
 	 */
-	reg = hard_int_mask(platform_ipi_intrnum());
+	reg = hard_int_mask(platform_ipi_hardintr_num());
 	set_intr_mask(reg);
 }
 
