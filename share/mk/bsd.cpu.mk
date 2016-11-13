@@ -303,7 +303,7 @@ MACHINE_CPU = v9 ultrasparc ultrasparc3
 
 .if ${MACHINE_CPUARCH} == "mips"
 CFLAGS += -G0
-. if ${MACHINE_ARCH:Mmips*el} != ""
+. if ${MACHINE_ARCH:Mmips*el*} != ""
 ACFLAGS += -EL
 AFLAGS += -EL
 CFLAGS += -EL
