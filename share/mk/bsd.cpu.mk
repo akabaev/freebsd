@@ -314,9 +314,11 @@ AFLAGS += -EB
 CFLAGS += -EB
 LDFLAGS += -EB
 . endif
-.if ${MACHINE_ARCH:Mmips*hf}
+. if ${MACHINE_ARCH:Mmips*hf}
 CFLAGS += -mhard-float
-.endif
+. else
+CFLAGS += -msoft-float
+. endif
 .endif
 
 ########## arm
