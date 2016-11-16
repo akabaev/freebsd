@@ -389,7 +389,7 @@ jz4780_mmc_prepare_dma(struct jz4780_mmc_softc *sc)
 	bus_dmamap_sync(sc->sc_dma_tag, sc->sc_dma_map, BUS_DMASYNC_PREWRITE);
 
 	/* Configure default DMA parameters */
-	sc->sc_dma_ctl = JZ_MODE_SEL | JZ_INCR_32 | JZ_DMAEN;
+	sc->sc_dma_ctl = JZ_MODE_SEL | JZ_INCR_64 | JZ_DMAEN;
 
 	/* Enable unaligned buffer handling */
 	off = (uintptr_t)cmd->data->data & 3;
@@ -765,6 +765,9 @@ jz4780_mmc_read_ivar(device_t bus, device_t child, int which,
 	case MMCBR_IVAR_MAX_DATA:
 		*(int *)result = 65535;
 		break;
+	case MMCBR_IVAR_TIMING:
+		*(int *)result = sc->sc_host.ios.timing;
+		break;
 	}
 
 	return (0);
@@ -803,6 +806,9 @@ jz4780_mmc_write_ivar(device_t bus, device_t child, int which,
 		break;
 	case MMCBR_IVAR_VDD:
 		sc->sc_host.ios.vdd = value;
+		break;
+	case MMCBR_IVAR_TIMING:
+		sc->sc_host.ios.timing = value;
 		break;
 	/* These are read-only */
 	case MMCBR_IVAR_CAPS:
@@ -845,7 +851,7 @@ jz4780_mmc_config_clock(struct jz4780_mmc_softc *sc, uint32_t freq)
 	clk_freq = (uint32_t)rate;
 
 	div = 0;
-	while (clk_freq > rate) {
+	while (clk_freq > freq) {
 		div++;
 		clk_freq >>= 1;
 	}
