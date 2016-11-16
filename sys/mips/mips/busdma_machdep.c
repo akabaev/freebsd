@@ -1060,7 +1060,7 @@ _bus_dmamap_unload(bus_dma_tag_t dmat, bus_dmamap_t map)
 }
 
 static void
-bus_dmamap_do_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op,
+bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op,
     int aligned)
 {
 	char tmp_cl[mips_dcache_max_linesize], tmp_clend[mips_dcache_max_linesize];
@@ -1168,49 +1168,6 @@ bus_dmamap_do_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op,
 	}
 }
 
-#define MIPS_DMA_NONCOHERENT
-
-#ifndef MIPS_DMA_NONCOHERENT
-static inline void
-bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op, int aligned)
-{
-	bus_dmamap_do_sync_buf(buf, len, op, aligned);
-}
-#else
-
-struct bus_dmamap_sync_desc {
-	vm_offset_t buf;
-	int len;
-	bus_dmasync_op_t op;
-	int aligned;
-};
-
-static void
-bus_dmamap_sync_buf_local(void *arg)
-{
-	struct bus_dmamap_sync_desc *opdesc;
-
-	opdesc = arg;
-	bus_dmamap_do_sync_buf(opdesc->buf, opdesc->len, opdesc->op,
-	    opdesc->aligned);
-}
-
-static inline void
-bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op, int aligned)
-{
-	struct bus_dmamap_sync_desc opdesc;
-
-	opdesc.buf = buf;
-	opdesc.len = len;
-	opdesc.op = op;
-	opdesc.aligned = aligned;
-
-	smp_rendezvous(NULL, bus_dmamap_sync_buf_local, NULL, &opdesc);
-}
-
-#endif /* MIPS_DMA_NONCOHERENT */
-
-
 static void
 _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 {
@@ -1254,12 +1211,60 @@ _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 	}
 }
 
-void
-_bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
+static inline void
+bus_dmamap_sync_local(bus_dma_tag_t dmat, bus_dmamap_t map,
+    bus_dmasync_op_t op)
 {
 	struct sync_list *sl, *end;
 	int aligned;
 
+	aligned = (map->flags & DMAMAP_CACHE_ALIGNED) ? 1 : 0;
+
+	CTR3(KTR_BUSDMA, "%s: op %x flags %x", __func__, op, map->flags);
+	if (map->sync_count) {
+		end = &map->slist[map->sync_count];
+		for (sl = &map->slist[0]; sl != end; sl++)
+			bus_dmamap_sync_buf(sl->vaddr, sl->datacount, op,
+			    aligned);
+	}
+}
+
+#define MIPS_DMA_NONCOHERENT
+
+#ifdef MIPS_DMA_NONCOHERENT
+
+struct bus_dmamap_sync_desc {
+	bus_dma_tag_t dmat;
+       	bus_dmamap_t map;
+	bus_dmasync_op_t op;
+};
+
+static void
+bus_dmamap_sync_ipi_local(void *arg)
+{
+	struct bus_dmamap_sync_desc *opdesc;
+
+	opdesc = arg;
+	bus_dmamap_sync_local(opdesc->dmat, opdesc->map, opdesc->op);
+}
+
+static inline void
+bus_dmamap_sync_ipi(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
+{
+	struct bus_dmamap_sync_desc opdesc;
+
+	opdesc.dmat = dmat;
+	opdesc.map = map;
+	opdesc.op = op;
+
+	smp_rendezvous(NULL, bus_dmamap_sync_ipi_local, NULL, &opdesc);
+}
+
+#endif /* MIPS_DMA_NONCOHERENT */
+
+void
+_bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
+{
 	if (op == BUS_DMASYNC_POSTWRITE)
 		return;
 	if (STAILQ_FIRST(&map->bpages))
@@ -1272,15 +1277,11 @@ _bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 		return;
 	}
 
-	aligned = (map->flags & DMAMAP_CACHE_ALIGNED) ? 1 : 0;
-
-	CTR3(KTR_BUSDMA, "%s: op %x flags %x", __func__, op, map->flags);
-	if (map->sync_count) {
-		end = &map->slist[map->sync_count];
-		for (sl = &map->slist[0]; sl != end; sl++)
-			bus_dmamap_sync_buf(sl->vaddr, sl->datacount, op,
-			    aligned);
-	}
+#ifdef MIPS_DMA_NONCOHERENT
+	bus_dmamap_sync_ipi(dmat, map, op);
+#else
+	bus_dmamap_sync_local(dmat, map, op);
+#endif
 }
 
 static void
