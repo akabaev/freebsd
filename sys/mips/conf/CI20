@@ -14,6 +14,7 @@ makeoptions	FDT_DTS_FILE=ci20.dts
 #options		KTR_MASK=(KTR_GEN)
 #options		KTR_COMPILE=(KTR_GEN)
 #options		KTR_VERBOSE
+options		KTRACE
 
 options 	BOOTP
 options 	BOOTP_NFSROOT
