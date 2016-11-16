@@ -75,6 +75,7 @@ device		gpio
 
 device 		scbus
 device 		da
+device 		pass
 
 device		mmc
 device		mmcsd
