@@ -1173,6 +1173,8 @@ _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 {
 	struct bounce_page *bpage;
 
+	critical_enter();
+
 	STAILQ_FOREACH(bpage, &map->bpages, links) {
 		if (op & BUS_DMASYNC_PREWRITE) {
 			if (bpage->datavaddr != 0)
@@ -1209,6 +1211,7 @@ _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 			dmat->bounce_zone->total_bounced++;
 		}
 	}
+	critical_exit();
 }
 
 static inline void
