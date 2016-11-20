@@ -412,17 +412,43 @@ static int
 jz4780_mmc_reset(struct jz4780_mmc_softc *sc)
 {
 	int timeout;
+	int reg;
 
-	JZ_MMC_WRITE_4(sc, JZ_MSC_CTRL,
-	    JZ_MMC_READ_4(sc, JZ_MSC_CTRL) | JZ_RESET);
+	/* Stop the clock */
+	reg = JZ_MMC_READ_4(sc, JZ_MSC_CTRL);
+	reg &= ~(JZ_CLOCK_CTRL_M);
+	reg |= JZ_CLOCK_STOP;
+	JZ_MMC_WRITE_4(sc, JZ_MSC_CTRL, reg);
+
 	timeout = 1000;
 	while (--timeout > 0) {
-		if ((JZ_MMC_READ_4(sc, JZ_MSC_STAT) & JZ_IS_RESETTING) == 0)
+		if ((JZ_MMC_READ_4(sc, JZ_MSC_STAT) & JZ_CLK_EN) == 0)
 			break;
 		DELAY(100);
 	}
-	if (timeout == 0)
+	if (timeout == 0) {
+		device_printf(sc->sc_dev, "Failed to stop clk.\n");
 		return (ETIMEDOUT);
+	}
+
+	/* Reset */
+	reg = JZ_MMC_READ_4(sc, JZ_MSC_CTRL);
+	reg |= JZ_RESET;
+	JZ_MMC_WRITE_4(sc, JZ_MSC_CTRL, reg);
+
+	timeout = 10;
+	while (--timeout > 0) {
+		if ((JZ_MMC_READ_4(sc, JZ_MSC_STAT) & JZ_IS_RESETTING) == 0)
+			break;
+		DELAY(1000);
+	}
+
+	if (timeout == 0) {
+		/*
+		 * X1000 never clears reseting bit.
+		 * Ignore for now.
+		 */
+	}
 
 	/* Set the timeouts. */
 	JZ_MMC_WRITE_4(sc, JZ_MSC_RESTO, 0xffff);

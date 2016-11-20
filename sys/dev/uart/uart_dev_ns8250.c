@@ -819,6 +819,7 @@ ns8250_bus_probe(struct uart_softc *sc)
 		return (0);
 	}
 
+	val = FCR_ENABLE | FCR_XMT_RST | FCR_RCV_RST;
 #ifdef CPU_XBURST
 	val |= FCR_UART_ON;
 #endif

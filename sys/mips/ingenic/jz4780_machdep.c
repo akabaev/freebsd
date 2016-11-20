@@ -122,25 +122,24 @@ mips_init(void)
 		phys_avail[i] = 0;
 	}
 
-	/* phys_avail regions are in bytes */
-	phys_avail[0] = MIPS_KSEG0_TO_PHYS(kernel_kseg0_end);
-	phys_avail[1] = 256 * 1024 * 1024;
+	/* The minimal amount of memory Ingenic SoC can have. */
+	dump_avail[0] = phys_avail[0] = MIPS_KSEG0_TO_PHYS(kernel_kseg0_end);
+	physmem = realmem = btoc(32 * 1024 * 1024);
 
-	phys_avail[2] = 0x30000000;
-	phys_avail[3] = phys_avail[2] + 768 * 1024 * 1024;
-
-	dump_avail[0] = phys_avail[0];
-	dump_avail[1] = phys_avail[1] - phys_avail[0];
-
-	dump_avail[2] = phys_avail[2];
-	dump_avail[3] = phys_avail[3] - phys_avail[2];
-
-	physmem = realmem = btoc(1 * 1024 * 1024 * 1024);
+	/*
+	 * X1000 mips cpu special.
+	 * TODO: do anyone know what is this ?
+	 */
+	__asm(
+		"li	$2, 0xa9000000	\n\t"
+		"mtc0	$2, $5, 4	\n\t"
+		"nop			\n\t"
+		::"r"(2));
 
 #ifdef FDT
 	if (fdt_get_mem_regions(mr, &mr_cnt, &val) == 0) {
 
-		physmem = btoc(val);
+		physmem = realmem = btoc(val);
 
 		KASSERT((phys_avail[0] >= mr[0].mr_start) && \
 			(phys_avail[0] < (mr[0].mr_start + mr[0].mr_size)),

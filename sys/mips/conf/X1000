@@ -1,8 +1,8 @@
-# JZ4780 -- Kernel config for Ingenic JZ47XX boards
+# X1000 -- Kernel config for Ingenic X1000 boards
 #
 # $FreeBSD$
 
-ident		JZ4780
+ident		X1000
 machine		mips mipsel
 cpu		CPU_XBURST
 cpu		CPU_MIPS4KC
@@ -13,8 +13,8 @@ makeoptions	ARCH_FLAGS="-EL -march=mips32r2"
 # Don't build any modules yet.
 makeoptions	MODULES_OVERRIDE=""
 
-files		"../ingenic/files.jz4780"
-hints		"JZ4780.hints"		#Default places to look for devices.
+files		"../ingenic/files.x1000"
+hints		"X1000.hints"		#Default places to look for devices.
 
 makeoptions	DEBUG=-g		#Build kernel with gdb(1) debug symbols
 
@@ -52,9 +52,6 @@ options 	INVARIANT_SUPPORT	#Extra sanity checks of internal structures, required
 #options 	WITNESS			#Enable checks to detect deadlocks and cycles
 #options 	WITNESS_SKIPSPIN	#Don't run witness on spinlocks for speed
 
-# Make an SMP-capable kernel by default
-options 	SMP			# Symmetric MultiProcessor Kernel
-
 device		loop
 device		ether
 #device		le
@@ -74,20 +71,19 @@ device		gpio
 
 device 		scbus
 device 		da
-device 		pass
 
 device		mmc
 device		mmcsd
 
 # USB support
-options 	USB_DEBUG	# enable debug msgs
-options 	USB_HOST_ALIGN=128 # L2 cache line size
-device		ohci		# OHCI PCI->USB interface
-device		ehci		# EHCI PCI->USB interface (USB 2.0)
-device		dwcotg		# DesignWare HS OTG controller
-device		usb		# USB Bus (required)
+#options 	USB_DEBUG	# enable debug msgs
+#options 	USB_HOST_ALIGN=128 # L2 cache line size
+#device		ohci		# OHCI PCI->USB interface
+#device		ehci		# EHCI PCI->USB interface (USB 2.0)
+#device		dwcotg		# DesignWare HS OTG controller
+#device		usb		# USB Bus (required)
 #device		udbp		# USB Double Bulk Pipe devices
-device		uhid		# "Human Interface Devices"
+#device		uhid		# "Human Interface Devices"
 #device		ulpt		# Printer
-device		umass		# Disks/Mass storage - Requires scbus and da
-device		ums		# Mouse
+#device		umass		# Disks/Mass storage - Requires scbus and da
+#device		ums		# Mouse
