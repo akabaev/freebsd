@@ -1456,6 +1456,7 @@ struct scsi_report_supported_opcodes
 #define RSO_OPTIONS_ALL		0x00
 #define RSO_OPTIONS_OC		0x01
 #define RSO_OPTIONS_OC_SA	0x02
+#define RSO_OPTIONS_OC_ASA	0x03
         uint8_t  requested_opcode;
         uint8_t  requested_service_action[2];
 	uint8_t  length[4];
@@ -1481,6 +1482,10 @@ struct scsi_report_supported_opcodes_descr
 	uint8_t  flags;
 #define RSO_SERVACTV		0x01
 #define RSO_CTDP		0x02
+#define RSO_CDLP_MASK		0x0c
+#define RSO_CDLP_NO		0x00
+#define RSO_CDLP_A		0x04
+#define RSO_CDLP_B		0x08
 	uint8_t  cdb_length[2];
 	struct scsi_report_supported_opcodes_timeout timeout[0];
 };
@@ -1496,6 +1501,10 @@ struct scsi_report_supported_opcodes_one
 	uint8_t  reserved;
 	uint8_t  support;
 #define RSO_ONE_CTDP		0x80
+#define RSO_ONE_CDLP_MASK	0x18
+#define RSO_ONE_CDLP_NO		0x00
+#define RSO_ONE_CDLP_A		0x08
+#define RSO_ONE_CDLP_B		0x10
 #define RSO_ONE_SUP_MASK	0x07
 #define RSO_ONE_SUP_UNAVAIL	0x00
 #define RSO_ONE_SUP_NOT_SUP	0x01
@@ -1509,7 +1518,9 @@ struct scsi_report_supported_tmf
 {
 	uint8_t  opcode;
 	uint8_t  service_action;
-	uint8_t  reserved[4];
+	uint8_t  options;
+#define RST_REPD		0x80
+	uint8_t  reserved[3];
 	uint8_t  length[4];
 	uint8_t  reserved1;
 	uint8_t  control;
@@ -1530,7 +1541,34 @@ struct scsi_report_supported_tmf_data
 #define RST_ITNRS		0x01
 #define RST_QTSS		0x02
 #define RST_QAES		0x04
-	uint8_t  reserved[2];
+	uint8_t  reserved;
+	uint8_t  length;
+};
+
+struct scsi_report_supported_tmf_ext_data
+{
+	uint8_t  byte1;
+	uint8_t  byte2;
+	uint8_t  reserved;
+	uint8_t  length;
+	uint8_t  byte5;
+#define RST_TMFTMOV		0x01
+	uint8_t  reserved2;
+	uint8_t  byte7;
+#define RST_WAKETS		0x01
+#define RST_TRTS		0x02
+#define RST_QTTS		0x04
+#define RST_LURTS		0x08
+#define RST_CTSTS		0x10
+#define RST_CACATS		0x20
+#define RST_ATSTS		0x40
+#define RST_ATTS		0x80
+	uint8_t  byte8;
+#define RST_ITNRTS		0x01
+#define RST_QTSTS		0x02
+#define RST_QAETS		0x04
+	uint8_t  long_timeout[4];
+	uint8_t  short_timeout[4];
 };
 
 struct scsi_report_timestamp
@@ -3494,6 +3532,8 @@ struct scsi_sense_forwarded
 #define	SSD_FORWARDED_SDS_UNK	0x00
 #define	SSD_FORWARDED_SDS_EXSRC	0x01
 #define	SSD_FORWARDED_SDS_EXDST	0x02
+	uint8_t	status;
+	uint8_t	sense_data[];
 };
 
 /*
@@ -3726,6 +3766,10 @@ void scsi_sense_ata_sbuf(struct sbuf *sb, struct scsi_sense_data *sense,
 			 u_int sense_len, uint8_t *cdb, int cdb_len,
 			 struct scsi_inquiry_data *inq_data,
 			 struct scsi_sense_desc_header *header);
+void scsi_sense_forwarded_sbuf(struct sbuf *sb, struct scsi_sense_data *sense,
+			      u_int sense_len, uint8_t *cdb, int cdb_len,
+			      struct scsi_inquiry_data *inq_data,
+			      struct scsi_sense_desc_header *header);
 void scsi_sense_generic_sbuf(struct sbuf *sb, struct scsi_sense_data *sense,
 			     u_int sense_len, uint8_t *cdb, int cdb_len,
 			     struct scsi_inquiry_data *inq_data,
@@ -3782,6 +3826,8 @@ int		scsi_devid_is_lun_eui64(uint8_t *bufp);
 int		scsi_devid_is_lun_naa(uint8_t *bufp);
 int		scsi_devid_is_lun_name(uint8_t *bufp);
 int		scsi_devid_is_lun_t10(uint8_t *bufp);
+int		scsi_devid_is_lun_md5(uint8_t *bufp);
+int		scsi_devid_is_lun_uuid(uint8_t *bufp);
 int		scsi_devid_is_port_naa(uint8_t *bufp);
 struct scsi_vpd_id_descriptor *
 		scsi_get_devid(struct scsi_vpd_device_id *id, uint32_t len,

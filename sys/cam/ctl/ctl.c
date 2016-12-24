@@ -332,7 +332,7 @@ const static struct ctl_logical_block_provisioning_page lbp_page_changeable = {{
 	/*page_code*/SMS_INFO_EXCEPTIONS_PAGE | SMPH_SPF,
 	/*subpage_code*/0x02,
 	/*page_length*/{CTL_LBPM_LEN >> 8, CTL_LBPM_LEN},
-	/*flags*/0,
+	/*flags*/SLBPP_SITUA,
 	/*reserved*/{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 	/*descr*/{}},
 	{{/*flags*/0,
@@ -4371,6 +4371,8 @@ hex2bin(const char *str, uint8_t *buf, int buf_size)
 		str += 2;
 	buf_size *= 2;
 	for (i = 0; str[i] != 0 && i < buf_size; i++) {
+		while (str[i] == '-')	/* Skip dashes in UUIDs. */
+			str++;
 		c = str[i];
 		if (isdigit(c))
 			c -= '0';
@@ -4406,7 +4408,7 @@ ctl_alloc_lun(struct ctl_softc *ctl_softc, struct ctl_lun *ctl_lun,
 	struct ctl_lun *nlun, *lun;
 	struct scsi_vpd_id_descriptor *desc;
 	struct scsi_vpd_id_t10 *t10id;
-	const char *eui, *naa, *scsiname, *vendor, *value;
+	const char *eui, *naa, *scsiname, *uuid, *vendor, *value;
 	int lun_number, i, lun_malloced;
 	int devidlen, idlen1, idlen2 = 0, len;
 
@@ -4458,6 +4460,10 @@ ctl_alloc_lun(struct ctl_softc *ctl_softc, struct ctl_lun *ctl_lun,
 	if (naa != NULL) {
 		len += sizeof(struct scsi_vpd_id_descriptor) + 16;
 	}
+	uuid = ctl_get_opt(&be_lun->options, "uuid");
+	if (uuid != NULL) {
+		len += sizeof(struct scsi_vpd_id_descriptor) + 18;
+	}
 	lun->lun_devid = malloc(sizeof(struct ctl_devid) + len,
 	    M_CTL, M_WAITOK | M_ZERO);
 	desc = (struct scsi_vpd_id_descriptor *)lun->lun_devid->data;
@@ -4503,6 +4509,16 @@ ctl_alloc_lun(struct ctl_softc *ctl_softc, struct ctl_lun *ctl_lun,
 		desc->length = hex2bin(naa, desc->identifier, 16);
 		desc->length = desc->length > 8 ? 16 : 8;
 		len -= 16 - desc->length;
+	}
+	if (uuid != NULL) {
+		desc = (struct scsi_vpd_id_descriptor *)(&desc->identifier[0] +
+		    desc->length);
+		desc->proto_codeset = SVPD_ID_CODESET_BINARY;
+		desc->id_type = SVPD_ID_PIV | SVPD_ID_ASSOC_LUN |
+		    SVPD_ID_TYPE_UUID;
+		desc->identifier[0] = 0x10;
+		hex2bin(uuid, &desc->identifier[2], 16);
+		desc->length = 18;
 	}
 	lun->lun_devid->len = len;
 
@@ -5501,19 +5517,6 @@ ctl_read_buffer(struct ctl_scsiio *ctsio)
 		return (CTL_RETVAL_COMPLETE);
 	}
 
-	if ((byte2 & RWB_MODE) != RWB_MODE_DATA &&
-	    (byte2 & RWB_MODE) != RWB_MODE_ECHO_DESCR &&
-	    (byte2 & RWB_MODE) != RWB_MODE_DESCR) {
-		ctl_set_invalid_field(ctsio,
-				      /*sks_valid*/ 1,
-				      /*command*/ 1,
-				      /*field*/ 1,
-				      /*bit_valid*/ 1,
-				      /*bit*/ 4);
-		ctl_done((union ctl_io *)ctsio);
-		return (CTL_RETVAL_COMPLETE);
-	}
-
 	if (buffer_offset > CTL_WRITE_BUFFER_SIZE ||
 	    buffer_offset + len > CTL_WRITE_BUFFER_SIZE) {
 		ctl_set_invalid_field(ctsio,
@@ -5563,17 +5566,6 @@ ctl_write_buffer(struct ctl_scsiio *ctsio)
 
 	lun = (struct ctl_lun *)ctsio->io_hdr.ctl_private[CTL_PRIV_LUN].ptr;
 	cdb = (struct scsi_write_buffer *)ctsio->cdb;
-
-	if ((cdb->byte2 & RWB_MODE) != RWB_MODE_DATA) {
-		ctl_set_invalid_field(ctsio,
-				      /*sks_valid*/ 1,
-				      /*command*/ 1,
-				      /*field*/ 1,
-				      /*bit_valid*/ 1,
-				      /*bit*/ 4);
-		ctl_done((union ctl_io *)ctsio);
-		return (CTL_RETVAL_COMPLETE);
-	}
 
 	len = scsi_3btoul(cdb->length);
 	buffer_offset = scsi_3btoul(cdb->offset);
@@ -6059,11 +6051,7 @@ do_next_page:
 	 * the mode page header, or if they didn't specify enough data in
 	 * the CDB to avoid truncating this page, kick out the request.
 	 */
-	if ((page_len != (page_index->page_len - page_len_offset -
-			  page_len_size))
-	 || (*len_left < page_index->page_len)) {
-
-
+	if (page_len != page_index->page_len - page_len_offset - page_len_size) {
 		ctl_set_invalid_field(ctsio,
 				      /*sks_valid*/ 1,
 				      /*command*/ 0,
@@ -6071,6 +6059,12 @@ do_next_page:
 				      /*bit_valid*/ 0,
 				      /*bit*/ 0);
 		free(ctsio->kern_data_ptr, M_CTL);
+		ctl_done((union ctl_io *)ctsio);
+		return (CTL_RETVAL_COMPLETE);
+	}
+	if (*len_left < page_index->page_len) {
+		free(ctsio->kern_data_ptr, M_CTL);
+		ctl_set_param_len_error(ctsio);
 		ctl_done((union ctl_io *)ctsio);
 		return (CTL_RETVAL_COMPLETE);
 	}
@@ -7353,6 +7347,8 @@ ctl_report_supported_opcodes(struct ctl_scsiio *ctsio)
 			ctl_done((union ctl_io *)ctsio);
 			return (CTL_RETVAL_COMPLETE);
 		}
+		/* FALLTHROUGH */
+	case RSO_OPTIONS_OC_ASA:
 		total_len = sizeof(struct scsi_report_supported_opcodes_one) + 32;
 		break;
 	default:
@@ -7441,6 +7437,18 @@ fill_one:
 		} else
 			one->support = 1;
 		break;
+	case RSO_OPTIONS_OC_ASA:
+		one = (struct scsi_report_supported_opcodes_one *)
+		    ctsio->kern_data_ptr;
+		entry = &ctl_cmd_table[opcode];
+		if (entry->flags & CTL_CMD_FLAG_SA5) {
+			entry = &((const struct ctl_cmd_entry *)
+			    entry->execute)[service_action];
+		} else if (service_action != 0) {
+			one->support = 1;
+			break;
+		}
+		goto fill_one;
 	}
 
 	ctl_set_success(ctsio);
@@ -7454,7 +7462,7 @@ int
 ctl_report_supported_tmf(struct ctl_scsiio *ctsio)
 {
 	struct scsi_report_supported_tmf *cdb;
-	struct scsi_report_supported_tmf_data *data;
+	struct scsi_report_supported_tmf_ext_data *data;
 	int retval;
 	int alloc_len, total_len;
 
@@ -7464,7 +7472,10 @@ ctl_report_supported_tmf(struct ctl_scsiio *ctsio)
 
 	retval = CTL_RETVAL_COMPLETE;
 
-	total_len = sizeof(struct scsi_report_supported_tmf_data);
+	if (cdb->options & RST_REPD)
+		total_len = sizeof(struct scsi_report_supported_tmf_ext_data);
+	else
+		total_len = sizeof(struct scsi_report_supported_tmf_data);
 	alloc_len = scsi_4btoul(cdb->length);
 
 	ctsio->kern_data_ptr = malloc(total_len, M_CTL, M_WAITOK | M_ZERO);
@@ -7483,10 +7494,11 @@ ctl_report_supported_tmf(struct ctl_scsiio *ctsio)
 	ctsio->kern_data_resid = 0;
 	ctsio->kern_rel_offset = 0;
 
-	data = (struct scsi_report_supported_tmf_data *)ctsio->kern_data_ptr;
+	data = (struct scsi_report_supported_tmf_ext_data *)ctsio->kern_data_ptr;
 	data->byte1 |= RST_ATS | RST_ATSS | RST_CTSS | RST_LURS | RST_QTS |
 	    RST_TRS;
 	data->byte2 |= RST_QAES | RST_QTSS | RST_ITNRS;
+	data->length = total_len - 4;
 
 	ctl_set_success(ctsio);
 	ctsio->io_hdr.flags |= CTL_FLAG_ALLOCATED;
@@ -9310,13 +9322,6 @@ ctl_request_sense(struct ctl_scsiio *ctsio)
 		ua_type = ctl_build_ua(lun, initidx, sense_ptr, sense_format);
 		if (ua_type != CTL_UA_NONE)
 			have_error = 1;
-		if (ua_type == CTL_UA_LUN_CHANGE) {
-			mtx_unlock(&lun->lun_lock);
-			mtx_lock(&softc->ctl_lock);
-			ctl_clr_ua_allluns(softc, initidx, ua_type);
-			mtx_unlock(&softc->ctl_lock);
-			mtx_lock(&lun->lun_lock);
-		}
 	}
 	if (have_error == 0) {
 		/*

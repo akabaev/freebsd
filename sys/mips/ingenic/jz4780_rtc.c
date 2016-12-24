@@ -48,7 +48,7 @@ __FBSDID("$FreeBSD$");
 
 #include "clock_if.h"
 
-#define JZ_RTC_TIMEOUT	5000
+#define	JZ_RTC_TIMEOUT	5000
 
 #define JZ_RTCCR	0x00
 # define JZ_RTCCR_WRDY	(1u << 7)
@@ -184,6 +184,8 @@ jz4780_rtc_gettime(device_t dev, struct timespec *ts)
 	int timeout;
 
 	sc = device_get_softc(dev);
+
+	timeout = JZ_RTC_TIMEOUT;
 	val2 = CSR_READ(sc, JZ_RTSR);
 	do {
 		val1 = val2;
