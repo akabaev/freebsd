@@ -199,8 +199,6 @@
 #ifndef MIPS_CCA_WC
 #ifdef MIPS_CCA_UA
 #define	MIPS_CCA_WC MIPS_CCA_UA
-#else
-#define	MIPS_CCA_WC MIPS_CCA_UNCACHED
 #endif
 #endif
 
