@@ -67,6 +67,16 @@ __FBSDID("$FreeBSD$");
 #define BUS_DMA_COULD_BOUNCE	BUS_DMA_BUS3
 #define BUS_DMA_MIN_ALLOC_COMP	BUS_DMA_BUS4
 
+/*
+ * On XBurst cores from Ingenic, cache-line writeback is local
+ * only, unless accompanied by invalidation. Invalidations force
+ * dirty line writeout and invalidation requests forwarded to
+ * other cores if other cores have the cache line dirty.
+ */
+#if defined(SMP) && defined(CPU_XBURST)
+#define	BUS_DMA_FORCE_WBINV
+#endif
+
 struct bounce_zone;
 
 struct bus_dma_tag {
@@ -1163,7 +1173,11 @@ bus_dmamap_sync_buf(vm_offset_t buf, int len, bus_dmasync_op_t op,
 		break;
 
 	case BUS_DMASYNC_PREWRITE:
+#ifdef BUS_DMA_FORCE_WBINV
+		mips_dcache_wbinv_range(buf, len);
+#else
 		mips_dcache_wb_range(buf, len);
+#endif
 		break;
 	}
 }
@@ -1190,8 +1204,13 @@ _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 					     bpage->vaddr),
 				    bpage->datacount);
 			if (bpage->vaddr_nocache == 0) {
+#ifdef BUS_DMA_FORCE_WBINV
+				mips_dcache_wbinv_range(bpage->vaddr,
+				    bpage->datacount);
+#else
 				mips_dcache_wb_range(bpage->vaddr,
 				    bpage->datacount);
+#endif
 			}
 			dmat->bounce_zone->total_bounced++;
 		}
@@ -1214,60 +1233,12 @@ _bus_dmamap_sync_bp(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 	critical_exit();
 }
 
-static inline void
-bus_dmamap_sync_local(bus_dma_tag_t dmat, bus_dmamap_t map,
-    bus_dmasync_op_t op)
+void
+_bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 {
 	struct sync_list *sl, *end;
 	int aligned;
 
-	aligned = (map->flags & DMAMAP_CACHE_ALIGNED) ? 1 : 0;
-
-	CTR3(KTR_BUSDMA, "%s: op %x flags %x", __func__, op, map->flags);
-	if (map->sync_count) {
-		end = &map->slist[map->sync_count];
-		for (sl = &map->slist[0]; sl != end; sl++)
-			bus_dmamap_sync_buf(sl->vaddr, sl->datacount, op,
-			    aligned);
-	}
-}
-
-#define MIPS_DMA_NONCOHERENT
-
-#ifdef MIPS_DMA_NONCOHERENT
-
-struct bus_dmamap_sync_desc {
-	bus_dma_tag_t dmat;
-       	bus_dmamap_t map;
-	bus_dmasync_op_t op;
-};
-
-static void
-bus_dmamap_sync_ipi_local(void *arg)
-{
-	struct bus_dmamap_sync_desc *opdesc;
-
-	opdesc = arg;
-	bus_dmamap_sync_local(opdesc->dmat, opdesc->map, opdesc->op);
-}
-
-static inline void
-bus_dmamap_sync_ipi(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
-{
-	struct bus_dmamap_sync_desc opdesc;
-
-	opdesc.dmat = dmat;
-	opdesc.map = map;
-	opdesc.op = op;
-
-	smp_rendezvous(NULL, bus_dmamap_sync_ipi_local, NULL, &opdesc);
-}
-
-#endif /* MIPS_DMA_NONCOHERENT */
-
-void
-_bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
-{
 	if (op == BUS_DMASYNC_POSTWRITE)
 		return;
 	if (STAILQ_FIRST(&map->bpages))
@@ -1280,11 +1251,15 @@ _bus_dmamap_sync(bus_dma_tag_t dmat, bus_dmamap_t map, bus_dmasync_op_t op)
 		return;
 	}
 
-#ifdef MIPS_DMA_NONCOHERENT
-	bus_dmamap_sync_ipi(dmat, map, op);
-#else
-	bus_dmamap_sync_local(dmat, map, op);
-#endif
+	aligned = (map->flags & DMAMAP_CACHE_ALIGNED) ? 1 : 0;
+
+	CTR3(KTR_BUSDMA, "%s: op %x flags %x", __func__, op, map->flags);
+	if (map->sync_count) {
+		end = &map->slist[map->sync_count];
+		for (sl = &map->slist[0]; sl != end; sl++)
+			bus_dmamap_sync_buf(sl->vaddr, sl->datacount, op,
+			    aligned);
+	}
 }
 
 static void
