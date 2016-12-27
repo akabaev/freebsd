@@ -29,6 +29,9 @@ options 	BOOTP_COMPAT
 device		sound
 device		xdma
 
+device		uether
+device		axe
+
 makeoptions	TRAMPLOADADDR=0x88000000
 
 #options 	VERBOSE_SYSINIT
