@@ -250,7 +250,6 @@ create_elf_from_srec(struct elfcopy *ecp, int ifd)
 	first = 1;
 	sec_index = 1;
 	sec_addr = entry = 0;
-	sz = 0;
 	while (fgets(line, _LINE_BUFSZ, ifp) != NULL) {
 		sz = 0;
 		if (line[0] == '\r' || line[0] == '\n')
