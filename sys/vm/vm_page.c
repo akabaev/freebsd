@@ -131,6 +131,12 @@ struct mtx_padalign vm_page_queue_free_mtx;
 
 struct mtx_padalign pa_lock[PA_LOCK_COUNT];
 
+/*
+ * bogus page -- for I/O to/from partially complete buffers,
+ * or for paging into sparsely invalid regions.
+ */
+vm_page_t bogus_page;
+
 vm_page_t vm_page_array;
 long vm_page_array_size;
 long first_page;
@@ -158,7 +164,7 @@ static void vm_page_alloc_check(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
 static void vm_page_free_wakeup(void);
-static void vm_page_init_fakepg(void *dummy);
+static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
 static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
@@ -166,14 +172,16 @@ static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
 static int vm_page_reclaim_run(int req_class, u_long npages, vm_page_t m_run,
     vm_paddr_t high);
 
-SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init_fakepg, NULL);
+SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init, NULL);
 
 static void
-vm_page_init_fakepg(void *dummy)
+vm_page_init(void *dummy)
 {
 
 	fakepg_zone = uma_zcreate("fakepg", sizeof(struct vm_page), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_NOFREE | UMA_ZONE_VM);
+	bogus_page = vm_page_alloc(NULL, 0, VM_ALLOC_NOOBJ |
+	    VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
 }
 
 /* Make sure that u_long is at least 64 bits when PAGE_SIZE is 32K. */
@@ -392,6 +400,11 @@ vm_page_domain_init(struct vm_domain *vmd)
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_name) =
 	    "vm laundry pagequeue";
 	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
+	    &vm_cnt.v_laundry_count;
+	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_name) =
+	    "vm unswappable pagequeue";
+	/* Unswappable dirty pages are counted as being in the laundry. */
+	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_vcnt) =
 	    &vm_cnt.v_laundry_count;
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
@@ -1328,9 +1341,11 @@ vm_page_next(vm_page_t m)
 	vm_page_t next;
 
 	VM_OBJECT_ASSERT_LOCKED(m->object);
-	if ((next = TAILQ_NEXT(m, listq)) != NULL &&
-	    next->pindex != m->pindex + 1)
-		next = NULL;
+	if ((next = TAILQ_NEXT(m, listq)) != NULL) {
+		MPASS(next->object == m->object);
+		if (next->pindex != m->pindex + 1)
+			next = NULL;
+	}
 	return (next);
 }
 
@@ -1346,9 +1361,11 @@ vm_page_prev(vm_page_t m)
 	vm_page_t prev;
 
 	VM_OBJECT_ASSERT_LOCKED(m->object);
-	if ((prev = TAILQ_PREV(m, pglist, listq)) != NULL &&
-	    prev->pindex != m->pindex - 1)
-		prev = NULL;
+	if ((prev = TAILQ_PREV(m, pglist, listq)) != NULL) {
+		MPASS(prev->object == m->object);
+		if (prev->pindex != m->pindex - 1)
+			prev = NULL;
+	}
 	return (prev);
 }
 
@@ -2574,7 +2591,7 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_enqueue: invalid queue %u request for page %p",
 	    queue, m));
-	if (queue == PQ_LAUNDRY)
+	if (queue == PQ_LAUNDRY || queue == PQ_UNSWAPPABLE)
 		pq = &vm_dom[0].vmd_pagequeues[queue];
 	else
 		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
@@ -2940,6 +2957,23 @@ vm_page_launder(vm_page_t m)
 			KASSERT(queue == PQ_NONE,
 			    ("wired page %p is queued", m));
 	}
+}
+
+/*
+ * vm_page_unswappable
+ *
+ *	Put a page in the PQ_UNSWAPPABLE holding queue.
+ */
+void
+vm_page_unswappable(vm_page_t m)
+{
+
+	vm_page_assert_locked(m);
+	KASSERT(m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0,
+	    ("page %p already unswappable", m));
+	if (m->queue != PQ_NONE)
+		vm_page_dequeue(m);
+	vm_page_enqueue(PQ_UNSWAPPABLE, m);
 }
 
 /*
@@ -3530,13 +3564,14 @@ DB_SHOW_COMMAND(pageq, vm_page_print_pageq_info)
 	db_printf("pq_free %d\n", vm_cnt.v_free_count);
 	for (dom = 0; dom < vm_ndomains; dom++) {
 		db_printf(
-	    "dom %d page_cnt %d free %d pq_act %d pq_inact %d pq_laund %d\n",
+    "dom %d page_cnt %d free %d pq_act %d pq_inact %d pq_laund %d pq_unsw %d\n",
 		    dom,
 		    vm_dom[dom].vmd_page_count,
 		    vm_dom[dom].vmd_free_count,
 		    vm_dom[dom].vmd_pagequeues[PQ_ACTIVE].pq_cnt,
 		    vm_dom[dom].vmd_pagequeues[PQ_INACTIVE].pq_cnt,
-		    vm_dom[dom].vmd_pagequeues[PQ_LAUNDRY].pq_cnt);
+		    vm_dom[dom].vmd_pagequeues[PQ_LAUNDRY].pq_cnt,
+		    vm_dom[dom].vmd_pagequeues[PQ_UNSWAPPABLE].pq_cnt);
 	}
 }
 
